@@ -1,0 +1,31 @@
+                        Strymonas library
+
+        Basic (foundational) interface
+
+stream_raw.mli                  Interface
+stream_raw_fn.ml                Implementation: functor of Cde
+
+        Back-ends
+cde.mli                         Code generation interface, used in strymonas
+cde_ex.mli                      Extended interface, for user actions
+
+pk_cde.ml                       Partially-known cde
+pk_coll.ml                      Partially-known collections
+
+backends.ml                     The convenience for selecting a backend
+backends/Trx/trx_code.ml        Instance for MetaOCaml code
+
+backends/C/c_ast.mli            AST for C
+backends/C/c_cde.ml             Instance for C
+backends/C/c_pp.ml              Pretty-print the C AST into C code 
+
+
+
+        High-level interface
+stream_cooked.mli               Interface
+stream_cooked_fn.ml             Implementation: functor of Cde
+
+stream_window.mli               Windowing
+stream_window_fn.ml             Implementation: functor of Cde
+
+Makefile                How to make it

@@ -1,0 +1,19 @@
+# The common part of Makefile, meant to be included into Makefile
+# into the subdirectories
+# (therefore, relative links are one deeper)
+
+# Many examples use OCaml back-end, and hence use MetaOCaml
+TOP=metaocaml
+
+OCAML=ocaml
+
+MOCAMLC=metaocamlc
+MOCAMLOPT=metaocamlopt
+
+.SUFFIXES: .ml .mli .cmo .cmi .cmx
+
+LIBDIR="../../lib"
+LIB=${LIBDIR}/stream.cma
+LIBOPT=${LIBDIR}/stream.cmxa
+LIBPURE=${LIBDIR}/stream_ocaml.cma
+INCLUDES=-I ../../lib -I ../../lib/backends/Trx -I ../../lib/backends/C 

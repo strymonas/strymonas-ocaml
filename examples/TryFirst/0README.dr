@@ -1,0 +1,20 @@
+The first examples of using Strymonas, with detailed explanations
+(in lieu of the user guide)
+They demonstrate the most common features of the library
+
+
+        Using strymonas from the BER MetaOCaml top-level:
+        generating OCaml code and running it. Implementing the simplest
+        example code (from the paper)
+        For the example that does not need MetaOCaml, see simple.ml below
+simple.ml
+
+        Using strymonas with the BER MetaOCaml native compiler. 
+        Generating OCaml code, natively compiling it and linking back
+        into the still running generator to run it
+
+        Using strymonas to generate and run C code
+        (Using plain OCaml: MetaOCaml is no longer necessary here)
+simple_c.ml
+
+
