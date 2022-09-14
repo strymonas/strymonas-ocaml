@@ -6,7 +6,7 @@ OCAML=metaocaml
 OCAMLC=metaocamlc
 OCAMLOPT=metaocamlopt
 OCAMLDEP=ocamldep
-OCAMLFND=ocamlfind -toolchain metaocaml ocamlopt -package streaming,batteries
+OCAMLFND=ocamlfind -toolchain metaocaml ocamlopt -package streaming,batteries,iter
 
 .SUFFIXES: .ml .mli .cmo .cmi .cmx
 
@@ -15,12 +15,14 @@ OBJS=$(COMMON_OBJS) benchmark_strymonas.cmx
 OBJS_BASE=$(COMMON_OBJS) benchmark_baseline.cmx 
 OBJS_STREAMING=$(COMMON_OBJS) benchmark_streaming.cmx 
 OBJS_BATTERIES=$(COMMON_OBJS) benchmark_batteries.cmx 
+OBJS_SEQ=$(COMMON_OBJS) benchmark_seq.cmx 
+OBJS_ITER=$(COMMON_OBJS) benchmark_iter.cmx 
 INCLUDES=-I ../lib -I ../lib/backends/Trx
 
 .PHONY: all clean # intf 
-all: lib lib-base lib-streaming lib-batteries
+all: lib lib-base lib-streaming lib-batteries lib-seq lib-iter
 
-.PHONY: lib lib-base lib-streaming lib-batteries lib-v1-v2 
+.PHONY: lib lib-base lib-streaming lib-batteries lib-seq lib-iter
 lib:
 	$(OCAMLOPT) -o bench.out $(INCLUDES) lifts.cmx stream.cmxa $(OBJS:.cmx=.ml)
 
@@ -34,8 +36,14 @@ lib-streaming:
 lib-batteries:
 	$(OCAMLFND) -o bench-batteries.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_BATTERIES:.cmx=.ml)
 
+lib-seq:
+	$(OCAMLFND) -o bench-seq.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_SEQ:.cmx=.ml)
 
-.PHONY: bench bench-base bench-streaming bench-batteries bench2
+lib-iter:
+	$(OCAMLFND) -o bench-iter.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_ITER:.cmx=.ml)
+
+
+.PHONY: bench bench-base bench-streaming bench-batteries bench-seq bench-iter
 bench: lib
 	./bench.out >| bench_result.txt && \
 	cat ./bench_result.txt | grep staged   >| bench_staged.dat
@@ -54,10 +62,14 @@ bench-batteries: lib-batteries
 	./bench-batteries.out >> bench_result.txt && \
 	cat ./bench_result.txt | grep batteries >| bench_batteries.dat
 
-bench2:
-	./bench.out >| bench_v2.txt
-	./bench-base.out >| bench_base.txt
-	./bench-streaming.out >| bench_streaming.txt
+bench-seq: lib-seq
+	./bench-seq.out >> bench_result.txt && \
+	cat ./bench_result.txt | grep seq >| bench_seq.dat
+
+bench-iter: lib-iter
+	./bench-iter.out >> bench_result.txt && \
+	cat ./bench_result.txt | grep iter >| bench_iter.dat
+
 
 #Generate code for C benchmarks
 # C benchmarks are taken and tested in a separate directory:

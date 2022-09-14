@@ -15,6 +15,8 @@ need to install those libraries.
 For external libraries
 `make bench-streaming`
 `make bench-batteries`
+`make bench-seq`
+`make bench-iter`
 
 `make benchmark_c`
 Generate code for C benchmarks
