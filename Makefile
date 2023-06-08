@@ -18,6 +18,16 @@ test:
 clean::
 	cd lib && $(MAKE) clean
 
+.PHONY: install uninstall reinstall
+install:
+	cd lib && $(MAKE) install
+
+uninstall:
+	cd lib && $(MAKE) uninstall
+
+reinstall:
+	$(MAKE) uninstall
+	$(MAKE) install
 
 .PHONY: bench
 bench:
