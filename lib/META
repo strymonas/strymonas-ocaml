@@ -1,0 +1,7 @@
+version = "20230708"
+description = "stream fusion, to completeness"
+requires = "stdlib-shims"
+archive(byte) = "stream.cma"
+archive(native) = "stream.cmxa"
+plugin(byte) = "stream.cma"
+#plugin(native) = "stream.cmxs"
