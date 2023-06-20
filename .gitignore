@@ -1,0 +1,4 @@
+*.o
+*.cm*
+/lib/depend
+/lib/stream.a
