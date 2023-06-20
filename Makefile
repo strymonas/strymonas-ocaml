@@ -1,13 +1,8 @@
-.PHONY: all 
-all: check-compiler lib
-
-.PHONY: check-compiler
-check-compiler:
-	@test $$(opam switch show) = "4.11.1+BER" \
-	|| (echo 1>&2 "OCaml must be 4.11.1+BER"; exit 1)
+.PHONY: all
+all: lib
 
 .PHONY: lib
-lib: 
+lib:
 	cd lib && $(MAKE)
 
 .PHONY: test
