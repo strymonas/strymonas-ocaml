@@ -3,8 +3,8 @@ all: check-compiler lib
 
 .PHONY: check-compiler
 check-compiler:
-	@test $$(opam switch show) = "4.11.1+BER" \
-	|| (echo 1>&2 "OCaml must be 4.11.1+BER"; exit 1)
+	@test $$(opam switch show) = "4.14.1+BER" \
+	|| (echo 1>&2 "OCaml must be 4.14.1+BER"; exit 1)
 
 .PHONY: lib
 lib: 
