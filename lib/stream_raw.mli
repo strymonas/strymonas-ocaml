@@ -1,6 +1,9 @@
 (* Stream lower-level interface *)
 
-type 'a cde         (* Abstract type of code values *)
+type 'a exp         (* Abstract type of code expressions *)
+type 'a stm         (* Abstract type of statements *)
+type 'a mut         (* Mutable variables *)
+type 'a arr         (* Arrays *)
 type 'a tbase       (* Base types *)
 type 'a stream      (* Here, 'a is not necessarily the code type! *)
 
@@ -10,7 +13,7 @@ type 'a stream      (* Here, 'a is not necessarily the code type! *)
    FYI, the continuation can be thought of as a kind of the yield keyword in generators
    from the point of view of the interface (although it is not correct).
 *)
-type 'a emit = ('a -> unit cde) -> unit cde
+type 'a emit = ('a -> unit stm) -> unit stm
 
 (* The termination condition: true to continue, false to terminate the stream.
    It should be cheap to evaluate.
@@ -44,36 +47,53 @@ type 'a emit = ('a -> unit cde) -> unit cde
  *)
 type goon = 
   | GTrue                               (* constant true *)
-  | GExp of bool cde                    (* should be cheap to evaluate *)
-  | GRef of bool ref cde                (* a boolean flag *)
+  | GExp of bool exp                    (* should be cheap to evaluate *)
+  | GRef of bool mut                    (* a boolean flag *)
 
 (* Producers *)
 (* The index expression of pull array should do let-insertion!
-   pull_array upb idx: 0 <= idx <= upb *)
-val pull_array : int cde -> (int cde -> 'a emit) -> 'a stream 
+   pull_array len idx: 0 <= idx < len *)
+val pull_array : int exp -> (int exp -> 'a emit) -> 'a stream 
 
 (* Initializers: sort-of let-expressions. They introduce stream state.
    They are also a sort of a flat_map
 *)
-(* The first argument is an initializing expression, which may be
-   effectful. It is evaluated only once, when the stream starts (that is,
-   before the first element is emitted).
-   initializing_ref allocates a reference cell with a given initial expression
+(* The following introduce local stream variables, so to speak,
+   both mutable and immutable.
+   Nested streams may have to be `closure converted' (in complicated
+   zips), therefore, all local variables, in particular,
+   variables whose bound expressions depend on the current element of
+   the outer stream, have to be declared using initializing... below.
+   The bound/initializing expression is evaluated only once, 
+   when the stream starts (that is, before the first element is emitted).
 *)
-val initializing      : 'z cde -> ('z cde -> 'a stream) -> 'a stream
-val initializing_ref  : 'z cde -> ('z ref cde -> 'a stream) -> 'a stream
-val initializing_uref : 'z cde -> ('z ref cde -> 'a stream) -> 'a stream
-val initializing_arr  : 'z tbase -> 'z cde array -> 
-                       ('z array cde -> 'a stream) -> 'a stream
+
+  (* Essentially let-insertion. The initializing expression may be stateful *)
+val initializing      : 'z exp -> ('z exp -> 'a stream) -> 'a stream
+  (* Mutable state with the given initial value *)
+val initializing_ref  : 'z exp -> ('z mut -> 'a stream) -> 'a stream
+  (* A *non-empty* array with a statically known, and 
+     preferably rather small size. It is generally mutable.
+    For immutable (parameters), consider initializing_static_arr
+ *)
+val initializing_arr  : 'z tbase -> 'z exp array -> 
+                       ('z arr -> 'a stream) -> 'a stream
+  (* A *non-empty* array with a statically known content.
+     It should not be mutated *)
+val initializing_static_arr  : 'z tbase -> ('b -> 'z exp) -> 'b array -> 
+                       ('z arr -> 'a stream) -> 'a stream
+  (* An uninitialized array of the given size. The first argument is
+     is the type descriptor.
+  *)
 val initializing_uarr : 'z tbase -> int -> 
-                       ('z array cde -> 'a stream) -> 'a stream
+                       ('z arr -> 'a stream) -> 'a stream
 
 
 (* Create an infinite stream: run step in an infinite loop *)
 val infinite : 'a emit -> 'a stream
 
 (* Consumer: the inverse of [infinite] *)
-val iter : ('a -> unit cde) -> 'a stream -> unit cde
+val iter : ('a -> unit stm) -> 'a stream -> unit stm
 
 
 (* Transformers *)
@@ -93,9 +113,7 @@ val iter : ('a -> unit cde) -> 'a stream -> unit cde
    (because we expect goon to be evaluated once each time
     before calling the continuation)
 *)
-val map_raw : ?linear:bool ->
-  ('a -> ('b -> unit cde) -> unit cde) ->
-  'a stream -> 'b stream
+val map_raw : ?linear:bool -> ('a -> 'b emit) -> 'a stream -> 'b stream
 val map_raw' : ('a -> 'b) -> 'a stream -> 'b stream
 
 (* Essentially, take_while *)
@@ -105,9 +123,8 @@ val guard : goon -> 'a stream -> 'a stream
    providing on its own: the filter predicates fuse better.
    Also, filter is rather common.
  *)
-val filter_raw : ('a -> bool cde) -> 'a stream -> 'a stream
+val filter_raw : ('a -> bool exp) -> 'a stream -> 'a stream
 
-val flat_map_raw : ('a cde -> 'b stream) -> 'a cde stream -> 
-  'b stream
+val flat_map_raw : ('a exp -> 'b stream) -> 'a exp stream -> 'b stream
 
 val zip_raw    : 'a stream -> 'b stream -> ('a * 'b) stream

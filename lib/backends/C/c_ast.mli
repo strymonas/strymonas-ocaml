@@ -18,6 +18,11 @@
   They are statements, period. We thus do not support things like *x++ = j++ 
   etc.
 
+  We also support C99: mixing of declarations and statements.
+  Declarations don't have to be collected at the beginning of the block.
+
+  Our data structure representation is also more precise, reflecting
+  the fact that comma-expressions support a restricted set of statements.
 *)
 
 type label     = string
@@ -101,12 +106,10 @@ type expression =
    (* A CAST can actually be a constructor expression *)
 
   | Call  of expression * expression list
-  | Comma of statement list * expression
+  | Comma of simple_statement list * expression
   (*
   | EXPR_SIZEOF of expression
-  *)
-  | TYPE_SIZEOF of ctype
-  (*
+  | TYPE_SIZEOF of specifier * decl_type
   | EXPR_ALIGNOF of expression
   | TYPE_ALIGNOF of specifier * decl_type
   *)
@@ -117,27 +120,40 @@ type expression =
 and init_expression =
   | Init_none
   | Init_single of expression
-  | Init_many   of expression list
+  | Init_compound of (init_designator * init_expression) list
 
-and statement =
+and init_designator =
+  | Indes_none
+  | Indes_field of string * init_designator
+  | Indes_index of expression * init_designator
+  | Indes_index_range of expression * expression
+
+and simple_statement =
   | NOP
   | CALL      of expression * expression list (* procedure call *)
   | UNMOD     of unary_modifier * expression
   | BIMOD     of binary_modifier * expression * expression
+and let_or_statement =
+  | LET       of definition
+  | STMT      of simple_statement
+and statement =
+  | SIMPLE    of let_or_statement
+  (* The motivation for this is to restrict the scope of bindings
+     in the containing expressions
+  *)
   | BLOCK     of block
-  | SEQUENCE  of statement list
-  | IF        of expression * statement * statement
-  | WHILE     of expression * statement
-  | DOWHILE   of expression * statement
-  | FOR       of statement * expression * statement * statement
+  | IF        of expression * block * block
+  | WHILE     of expression * block
+  | DOWHILE   of expression * block
+  | FOR       of let_or_statement * expression * simple_statement * block
   | BREAK
   | CONTINUE
   | RETURN    of expression
-  | SWITCH    of expression * statement
-  | CASE      of expression * statement
-  | CASERANGE of expression * expression * statement
-  | DEFAULT   of statement
-  | LABEL     of label * statement
+  | SWITCH    of expression * block
+  | CASE      of expression * block
+  | CASERANGE of expression * expression * block
+  | DEFAULT   of block
+  | LABEL     of label                  (* label:; *)
   | GOTO      of label
   | COMPGOTO  of expression (* GCC's "goto *exp" *)
   (*
@@ -149,13 +165,13 @@ and statement =
        string list * (* clobbered registers *)
   *)   
 
-(* A block contains a list of local label declarations ( GCC's ({ __label__ 
- * l1, l2; ... }) ) , a list of definitions and a list of statements  *)
-and block = 
-    { blabels: label list;
-      bdefs:   definition list;
-      bstmts:  statement list 
-    } 
+(* Before:
+   A block contains a list of local label declarations ( GCC's ({ __label__ 
+   l1, l2; ... }) ) , a list of definitions and a list of statements.
+   We don't use GCC labels anyway, so we drop them.
+   Also, we now support the mixture of definitions and statements
+*)
+and block = statement list
 
 and typedname = varname * ctype         (*   const int * x   *)
 

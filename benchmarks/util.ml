@@ -75,30 +75,3 @@ let mean_error confidence arr =
   t *. (sqrt @@ unbiased_var arr) /. (sqrt @@ float sample_size)
 
 
-(* from https://github.com/ocaml/ocaml/blob/trunk/stdlib/seq.ml *)
-open Seq
-let rec take_aux n xs =
-if n = 0 then
-  empty
-else
-  fun () ->
-    match xs() with
-    | Nil ->
-        Nil
-    | Cons (x, xs) ->
-        Cons (x, take_aux (n-1) xs)
-
-let take n xs =
-  if n < 0 then invalid_arg "Seq.take";
-  take_aux n xs
-
-let rec map2 f xs ys () =
-  match xs() with
-  | Nil ->
-      Nil
-  | Cons (x, xs) ->
-      match ys() with
-      | Nil ->
-          Nil
-      | Cons (y, ys) ->
-          Cons (f x y, map2 f xs ys)

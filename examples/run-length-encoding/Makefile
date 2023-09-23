@@ -9,4 +9,8 @@ rle:
 
 apples:
 	${TOP} ${INCLUDES} ${LIB} apples.ml
+	$(CC) -W -Wall -o apples apples.c && ./apples
+
+clean::
+	rm -f apples
 

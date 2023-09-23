@@ -1,6 +1,6 @@
-The first examples of using Strymonas, with detailed explanations
-(in lieu of the user guide)
-They demonstrate the most common features of the library
+  The first examples of using Strymonas, with detailed explanations
+  (in lieu of the user guide)
+  They demonstrate the most common features of the library
 
 
         Using strymonas from the BER MetaOCaml top-level:

@@ -8,7 +8,9 @@
 module type cde        = module type of Cde
 
 module type desc = sig
-  type 'a cde
+  type 'a exp
+  type 'a stm
+  type 'a mut
   (* The two arguments of (coll,collref) desc are:
      coll: the type of the collection
      collref : the type to the mutable reference collection
@@ -16,18 +18,20 @@ module type desc = sig
      If we do provide it, we need an index type: see below for an example.
   *)
   type (_,_) desc =
-    | Single : ('a cde, 'a ref cde) desc
-    | Tuple  : ('a cde * 'b cde, 'a ref cde * 'b ref cde) desc
+    | Single : ('a exp, 'a mut) desc
+    | Tuple  : ('a exp * 'b exp, 'a mut * 'b mut) desc
         (* can be extended and generalized to triples, etc. and pairs *)
 end
 
 module Desc(C:cde) = struct
-  type 'a cde = 'a C.cde
+  type 'a exp = 'a C.exp
+  type 'a stm = 'a C.stm
+  type 'a mut = 'a C.mut
   type (_,_) desc =
-    | Single : ('a cde, 'a ref cde) desc
-    | Tuple  : ('a cde * 'b cde, 'a ref cde * 'b ref cde) desc
+    | Single : ('a exp, 'a mut) desc
+    | Tuple  : ('a exp * 'b exp, 'a mut * 'b mut) desc
   let newref : type c cref w. 
-        (c,cref) desc -> c -> (cref -> w cde) -> w cde =
+        (c,cref) desc -> c -> (cref -> w stm) -> w stm =
     fun d c k ->
       match d with
       | Single -> C.newref c k
@@ -42,7 +46,7 @@ module Desc(C:cde) = struct
     | Tuple  ->
         let (xr,yr) = cr in
         C.(dref xr,dref yr)
-  let set : type c cref. (c,cref) desc -> cref -> c -> unit cde = fun d cr c ->
+  let set : type c cref. (c,cref) desc -> cref -> c -> unit stm = fun d cr c ->
     match d with
     | Single -> C.(cr := c)
     | Tuple  ->

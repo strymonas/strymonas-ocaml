@@ -43,9 +43,9 @@ module Make(C:cde_ex) = struct
  *)
  type 'a sliding_window =
     {size: int;              (* non-negative *)
-     elem: 'a cde;           (* the current stream element, just deposited 
+     elem: 'a C.exp;         (* the current stream element, just deposited 
                                 into the window *)
-     elem_index: int cde;    (* The current element count since the beginning
+     elem_index: int C.exp;  (* The current element count since the beginning
                                 of the stream. The very first element has
                                 elem_index = 0.
                                 If elem_index < size-1, the window is not
@@ -53,10 +53,10 @@ module Make(C:cde_ex) = struct
                                 *)
      (* the function to get earlier stream elements,
         earlier than elem, from the window *)
-     elem_get: int cde -> ('a cde -> unit cde) -> unit cde; 
+     elem_get: int C.exp -> ('a C.exp -> unit C.stm) -> unit C.stm; 
    }
 
- let sliding_window : int -> 'a tbase -> 'a cstream -> 
+ let sliding_window : int -> 'a C.tbase -> 'a cstream -> 
    'a sliding_window stream = fun size ty st ->
   assert (size>0);
   let buffer_len = ceil_power2 size in
@@ -73,7 +73,7 @@ module Make(C:cde_ex) = struct
  (* This is a sample aggregator over the sliding window: sliding average
    Until the window is filled, no averages are produced.
  *)
- let sliding_average : int sliding_window stream -> float cstream = fun st ->
+ let sliding_average : int sliding_window stream -> C.F64.t cstream = fun st ->
   let- sliding_sum = Raw.initializing_ref C.(int 0) in
   st |> Raw.map_raw ~linear:false (fun {size;elem;elem_index;elem_get} k ->
     let open C in
@@ -86,7 +86,7 @@ module Make(C:cde_ex) = struct
         begin
           let- curr_sum = letl (dref sliding_sum + elem) in
           let- res = 
-            letl (float_of_int curr_sum /. float Stdlib.(float_of_int size)) in
+            letl F64.(of_int curr_sum /. lit Stdlib.(float_of_int size)) in
           let- old = elem_get (elem_index - int Stdlib.(size-1)) in
           seq (sliding_sum := curr_sum - old) @@ k res
         end
@@ -106,29 +106,27 @@ let test1 =
   |> fold (Fun.flip C.cons) (C.nil ())
 
 (*
-val test1 : float list C.cde =
-  {C.sta = C.Unk;
-   dyn = .<
-    let t_4 = [|1;2;3;4;5;6;7|] in
-    let t_3 = [|0;0|] in
-    let v_1 = Stdlib.ref [] in
-    (let v_2 = Stdlib.ref 0 in
-     let v_5 = Stdlib.ref 0 in
-     let v_6 = Stdlib.ref 0 in
-     while (! v_6) <= 6 do
-       (let el_7 = Stdlib.Array.get t_4 (! v_6) in
-        let t_8 = ! v_5 in
-        Stdlib.incr v_5;
-        Stdlib.Array.set t_3 (Stdlib.Int.logand t_8 1) el_7;
-        if t_8 < 1
-        then v_2 := ((! v_2) + el_7)
-        else
-          (let t_9 = (! v_2) + el_7 in
-           let t_10 = (Stdlib.float_of_int t_9) /. 2. in
-           let el_11 = Stdlib.Array.get t_3 (Stdlib.Int.logand (t_8 - 1) 1) in
-           v_2 := (t_9 - el_11); v_1 := (t_10 :: (! v_1))));
-       Stdlib.incr v_6 done);
-    ! v_1>. }
+val test1 : float list C.stm =
+  C.Stm .<
+   let t_4 = [|1;2;3;4;5;6;7|] in
+   let t_3 = [|0;0|] in
+   let v_1 = Stdlib.ref [] in
+   (let v_2 = Stdlib.ref 0 in
+    let v_5 = Stdlib.ref 0 in
+    for i_6 = 0 to 7 - 1 do
+      let el_7 = Stdlib.Array.get t_4 i_6 in
+      let t_8 = ! v_5 in
+      Stdlib.incr v_5;
+      Stdlib.Array.set t_3 (Stdlib.Int.logand t_8 1) el_7;
+      if t_8 < 1
+      then v_2 := ((! v_2) + el_7)
+      else
+        (let t_9 = (! v_2) + el_7 in
+         let t_10 = (Stdlib.Float.of_int t_9) /. 2. in
+         let el_11 = Stdlib.Array.get t_3 (Stdlib.Int.logand (t_8 - 1) 1) in
+         v_2 := (t_9 - el_11); v_1 := (t_10 :: (! v_1)))
+    done);
+   ! v_1>. 
 *)
 
 
@@ -161,7 +159,7 @@ let test3 =
       |> filter C.(fun x -> x mod (int 2) = int 1) 
       |> sliding_window 3 C.tint 
       |> sliding_average
-      |> map C.(fun x -> x *. float 3.)) 
+      |> map C.F64.(fun x -> x *. lit 3.)) 
   |> fold (Fun.flip C.cons) (C.nil ())
 
 let[@warning "-8"] 
@@ -179,7 +177,7 @@ module Test4(C:cde_ex) = struct
        |> filter C.(fun x -> x mod (int 2) = int 1) 
        |> sliding_window 3 C.tint
        |> sliding_average
-       |> map C.truncate) 
+       |> map C.F64.truncate) 
     |> iter C.print_int
 end
 
@@ -187,34 +185,33 @@ let _ =
   let module M = Test4(C) in M.test4
 
 (*
-    - : unit C.cde =
-{C.sta = C.Unk;
- dyn = .<
-  let t_40 = [|1;2;3;4;5;6;7;8;9|] in
-  let t_39 = [|0;0;0;0|] in
-  let v_37 = Stdlib.ref 1 in
-  let v_38 = Stdlib.ref 0 in
-  let v_41 = Stdlib.ref 0 in
-  for i_42 = 0 to 8 do
-    let el_43 = Stdlib.Array.get t_40 i_42 in
-    if (el_43 mod 2) = 1
-    then
-      let t_44 = ! v_41 in
-      (Stdlib.incr v_41;
-       Stdlib.Array.set t_39 (Stdlib.Int.logand t_44 3) el_43;
-       if t_44 < 2
-       then v_38 := ((! v_38) + el_43)
-       else
-         (let t_45 = (! v_38) + el_43 in
-          let t_46 = (Stdlib.float_of_int t_45) /. 3. in
-          let el_47 = Stdlib.Array.get t_39 (Stdlib.Int.logand (t_44 - 2) 3) in
-          v_38 := (t_45 - el_47);
-          (let t_48 = Stdlib.truncate t_46 in
-           let t_49 = ! v_37 in
-           Stdlib.incr v_37;
-           Stdlib.Format.print_int ((100 * t_49) + t_48);
-           Stdlib.Format.force_newline ())))
-  done>. }
+- : unit C.stm =
+C.Stm .<
+ let t_40 = [|1;2;3;4;5;6;7;8;9|] in
+ let t_39 = [|0;0;0;0|] in
+ let v_37 = Stdlib.ref 1 in
+ let v_38 = Stdlib.ref 0 in
+ let v_41 = Stdlib.ref 0 in
+ for i_42 = 0 to 9 - 1 do
+   let el_43 = Stdlib.Array.get t_40 i_42 in
+   if (el_43 mod 2) = 1
+   then
+     let t_44 = ! v_41 in
+     (Stdlib.incr v_41;
+      Stdlib.Array.set t_39 (Stdlib.Int.logand t_44 3) el_43;
+      if t_44 < 2
+      then v_38 := ((! v_38) + el_43)
+      else
+        (let t_45 = (! v_38) + el_43 in
+         let t_46 = (Stdlib.Float.of_int t_45) /. 3. in
+         let el_47 = Stdlib.Array.get t_39 (Stdlib.Int.logand (t_44 - 2) 3) in
+         v_38 := (t_45 - el_47);
+         (let t_48 = Stdlib.truncate t_46 in
+          let t_49 = ! v_37 in
+          Stdlib.incr v_37;
+          Stdlib.Format.print_int ((100 * t_49) + t_48);
+          Stdlib.Format.force_newline ())))
+ done>. 
 *)
 
 let () = 
@@ -230,48 +227,38 @@ let () =
 module CC = Backends.C
 
 let _ = let module M = Test4(CC) in 
-  CC.print M.test4
+  CC.print_code M.test4
 
 (*
-void fn()
-{
-   int64_t v_1 = 1;
-   int64_t v_2 = 0;
-   int64_t a_3[4];
-   int64_t a_4[9] = {1,2,3,4,5,6,7,8,9};
-   int64_t v_5 = 0;
-   int64_t i_6;
-   for (i_6 = 0; i_6 <= 8; i_6++)
-   {
-      int64_t t_7;
-      t_7 = a_4[i_6];
-      if ((t_7 % 2) == 1)
-      {
-         int64_t t_8;
-         t_8 = v_5;
-         v_5++;
-         (a_3[t_8 & 3]) = t_7;
-         if (t_8 < 2)
-         {
-            v_2 = v_2 + t_7;
-         }
-         else {
-                 int64_t t_9;
-                 double t_10;
-                 int64_t t_11;
-                 int64_t t_12;
-                 int64_t t_13;
-                 t_9 = v_2 + t_7;
-                 t_10 = ((double)t_9) / 3.;
-                 t_11 = a_3[(t_8 - 2) & 3];
-                 v_2 = t_9 - t_11;
-                 t_12 = (int64_t)t_10;
-                 t_13 = v_1;
-                 v_1++;
-                 printf("%ld\n",(long)((100 * t_13) + t_12));
-         }
+void fn(){
+  int64_t x_1 = 1;
+  int64_t x_2 = 0;
+  int64_t a_3[4];
+  static int64_t a_4[9] = {1,2,3,4,5,6,7,8,9};;
+  int64_t x_5 = 0;
+  for (int64_t i_6 = 0; i_6 < 9; i_6 += 1){
+    int64_t const t_7 = a_4[i_6];
+    if ((t_7 % 2) == 1)
+    {
+      int64_t const t_8 = x_5;
+      x_5++;
+      (a_3[t_8 & 3]) = t_7;
+      if (t_8 < 2)
+      
+        x_2 = x_2 + t_7;
+      else {
+        int64_t const t_9 = x_2 + t_7;
+        double const t_10 = ((double)t_9) / 3.;
+        int64_t const t_11 = a_3[(t_8 - 2) & 3];
+        x_2 = t_9 - t_11;
+        int64_t const t_12 = (int64_t)t_10;
+        int64_t const t_13 = x_1;
+        x_1++;
+        printf("%ld\n",(100 * t_13) + t_12);
       }
-   }}
+    }
+  }
+}
 *)
 
 (* Run the generated C code, capture its output as a string and compare

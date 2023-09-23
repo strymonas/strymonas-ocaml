@@ -6,13 +6,7 @@
 #load "stream.cma";;
 *)
 
-module type cde = sig
-  include module type of Cde_ex
-  val run : 'a cde -> 'a
-  val ident : string
-  val run_capture_output : unit cde -> Scanf.Scanning.in_channel
-  val print : 'a cde -> unit
-end
+module type cde = module type of Cde_top
 
 module Utils(C: cde) = struct
   let check msg cnv v exp =
@@ -63,27 +57,97 @@ end
 
 module CodeBasic = struct
   include Trx_code
-  let run = Runcode.run
-  let run_capture_output x = Trx_code.run_capture_output Runcode.run x
-  let print x = Codelib.print_code Format.std_formatter x
   let ident = "MetaOCaml, Basic"
 end
 
 module CodePV = struct
   include Pk_cde.Make(Trx_code)
-  let run x = Runcode.run (dyn x)
-  let run_capture_output x = Trx_code.run_capture_output Runcode.run (dyn x)
-  let print x = Codelib.print_code Format.std_formatter (dyn x)
-  let ident = "MetaOCaml"
 end
 
 module CCodePV = struct
   include Pk_cde.Make(C_cde)
-  let run x = C_cde.run (dyn x)
-  let run_capture_output x = C_cde.run_capture_output (dyn x)
-  let print x = C_cde.nullary_fun Format.std_formatter (dyn x)
-  let ident = "C"
 end
+
+module MiscTest(C: cde) = struct
+  open Stream_cooked_fn.Make(C)
+  open Utils(C)
+
+  let () = Printf.printf "\nMisc Test, %s backend\n" C.ident
+
+  let test_sum = from_to C.(int 1) C.(int 10) |> sum_int
+  let () = check_int "test_sum" 55 @@ test_sum
+
+  (* XXX
+  let test_average = from_to C.(int 1) C.(int 10) |> average_int
+  let () = check_float "test_average" 5.5 @@ test_average
+  *)
+
+  let test_scan1 = from_to C.(int 1) C.(int 10) 
+      |> scan C.( + ) C.(int 0) |> sum_int
+  let () = check_int "test_scan1" 
+     (List.fold_left ( + ) 0 [1;3;6;10;15;21;28;36;45;55]) @@ test_scan1
+
+  let test_atan64 = 
+    from_to C.(int 1) C.(int 10) |> map C.F64.of_int |>
+    map C.F64.atan.invoke |> 
+    fold_ Desc.Single C.F64.(+.) C.(F64.lit 0.) C.F64.print
+  let () = check_list reader_single (Printf.sprintf "%.17g") "test_atan 64" 
+      (List.init 10 succ |> List.map float_of_int |>
+      List.map atan |> List.fold_left ( +. ) 0. |> fun x -> [x]) @@ 
+    test_atan64
+
+  let test_atan32 = 
+    from_to C.(int 1) C.(int 10) |> map C.F32.of_int |>
+    map C.F32.atan.invoke |> 
+    fold_ Desc.Single C.F32.(+.) C.(F32.lit 0.) C.F32.print
+  let () = check_list reader_single 
+      (fun x -> 
+        if C.ident = "C" then Printf.sprintf "%.8g" x else 
+                              Printf.sprintf "%.17g" x) "test_atan 32" 
+      (List.init 10 succ |> List.map float_of_int |>
+      List.map atan |> List.fold_left ( +. ) 0. |> fun x -> [x]) @@ 
+    test_atan32
+
+  let test_complex1 = 
+    let open C in
+    let open C.C32 in
+    letl (lit Complex.{re=2.;im=3.}) @@ fun a ->
+    letl (lit Complex.{re=4.;im=5.}) @@ fun b ->
+    new_uarray C32.tbase 10 @@ fun arr ->
+    array_set arr (int 0) (conj (a +. b)) @.
+    array_get arr (int 0) @@ fun v ->
+    letl (v *. a) @@ fun v ->
+    complex (imag v) (real v) |> ret
+
+  (* let () = C.print_code test_complex1 *)
+
+  let string_of_cmlx x = let Complex.{re;im} = C.C32.of_t x in
+  Printf.sprintf "%.1f%+.1f*I" re im
+
+  let () = check "test complex1" string_of_cmlx
+      (C.C32.to_t Complex.{re= 2.;im=36.})
+      test_complex1 
+
+  let test_complex2 = 
+    let open C in
+    let open C.C32 in
+    of_static_arr C32.tbase (fun i -> lit {Complex.re=i; im=1.}) 
+      (List.init 5 succ |> List.map float_of_int |> Array.of_list) |>
+    map norm2 |>
+    fold F32.(+.) F32.(lit 0.)
+
+  (* let () = C.print_code test_complex2 *)
+
+  let () = check "test complex2" (fun x -> C.F32.of_t x |> string_of_float)
+      (List.init 5 succ |> List.map float_of_int |> 
+      List.map (fun x -> Complex.{re=x; im=1.}) |>
+      List.map Complex.norm2 |>
+      List.fold_left (+.) 0. |> C.F32.to_t)
+      test_complex2
+end
+
+module M = MiscTest(CodePV)
+module M = MiscTest(CCodePV)
 
 module SimpleTest(C: cde) = struct
   open Stream_cooked_fn.Make(C)
@@ -99,14 +163,14 @@ module SimpleTest(C: cde) = struct
 
   let test2 =
     of_float_array [|1.0;2.0;3.0|]
-     |> map C.truncate
+     |> map C.F64.truncate
      |> sum_int
 
   let () = check_int "map_fold_test" 6 test2
 
   let test3 =
     of_float_array [|1.0;2.0;3.0;4.0|]
-    |> map C.truncate
+    |> map C.F64.truncate
     |> filter C.(fun x -> x mod int 2 = int 0)
     |> map C.(fun x -> x * x)
     |> sum_int
@@ -133,7 +197,7 @@ module SimpleTest(C: cde) = struct
 
   let test4 =
     of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0;7.0|]
-    |> map C.truncate
+    |> map C.F64.truncate
     |> filter C.(fun x -> x mod int 2 = int 0)
     |> take (C.int 2)
     |> map C.(fun x -> x * x)
@@ -198,9 +262,9 @@ module SimpleTestOCaml = struct
 
   let test3 =
     of_float_array [|1.0;2.0;3.0;4.0|]
-    |> map C.truncate
+    |> map C.F64.truncate
     |> filter C.(fun x -> x mod int 2 = int 0)
-    |> map (C.with_cde (fun x -> C.of_code .<.~x * .~x>.))
+    |> map C.((make_ff Stdlib.(fun x -> .<.~x * .~x>.)).invoke)
     |> sum_int
 
   let () = check_int "map_filter_map_fold, OCaml" 20 test3
@@ -215,7 +279,7 @@ module SimpleTestOCaml = struct
       ([1; 2; 3; 4; 5]) @@ begin
     from_to (C.int 1) (C.int 5)
     |> fold (fun z a -> C.cons a z) C.nil
-    |> C.with_cde (fun l -> C.of_code .<List.rev .~l>.)
+    |> C.((make_ff1 .<List.rev>.).invoke)
   end
 
   let () = check "take_fold" (show_list string_of_int)
@@ -358,7 +422,6 @@ let _ = M.test7
 
 module M = MainTest(CCodePV)
 
-
 module ZipTest(C: cde) = struct
   open Stream_cooked_fn.Make(C)
   open Utils(C)
@@ -395,14 +458,14 @@ module ZipTest(C: cde) = struct
   Raw.zip_raw
 	    (
 	      of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0|]
-	      |> map C.truncate
+	      |> map C.F64.truncate
 	      |> take (C.int 5)
 	      |> filter even
 	      |> map square)
 	    (
 	      iota (C.int 10)
-	      |> map C.(fun x -> float_of_int (x * x)))
-  |> iter C.(fun (x,y) -> seq (print_int x) (print_float y))
+	      |> map C.(fun x -> F64.of_int (x * x)))
+  |> iter C.(fun (x,y) -> seq (print_int x) (F64.print y))
 
   let () = check_intfloat_list "zip: testz1"
     [(4, 100.); (16, 121.)] testz1
@@ -413,14 +476,14 @@ module ZipTest(C: cde) = struct
    Raw.zip_raw
         (
 	      iota (C.int 10)
-	      |> map C.(fun x -> float_of_int (x * x)))
+	      |> map C.(fun x -> F64.of_int (x * x)))
 	    (
 	      of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0|]
-	      |> map C.truncate
+	      |> map C.F64.truncate
 	      |> take (C.int 5)
 	      |> filter even
 	      |> map square)
-  |> iter C.(fun (y,x) -> seq (print_int x) (print_float y))
+  |> iter C.(fun (y,x) -> seq (print_int x) (F64.print y))
   end
 
   (* Filters and counters on both streams *)
@@ -429,16 +492,16 @@ module ZipTest(C: cde) = struct
   Raw.zip_raw
 	    (
 	      of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0;7.0;8.0|]
-	      |> map C.truncate
+	      |> map C.F64.truncate
 	      |> take (C.int 10)
 	      |> filter even
 	      |> map square)
 	    (
 	      iota (C.int 20)
 	      |> filter (fun x -> C.(x mod int 3 = int 0))
-	      |> map C.(fun x -> float_of_int (x * x))
+	      |> map C.(fun x -> F64.of_int (x * x))
 	      |> take (C.int 3))
-  |> iter C.(fun (x,y) -> seq (print_int x) (print_float y))
+  |> iter C.(fun (x,y) -> seq (print_int x) (F64.print y))
   end
 
   let () = check_intfloat_list "zip: testz21"
@@ -446,16 +509,16 @@ module ZipTest(C: cde) = struct
   Raw.zip_raw
 	    (
 	      of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0;7.0;8.0|]
-	      |> map C.truncate
+	      |> map C.F64.truncate
 	      |> filter even
 	      |> take (C.int 2)
 	      |> map square)
 	    (
 	      iota (C.int 20)
 	      |> filter (fun x -> C.(x mod int 3 = int 0))
-	      |> map C.(fun x -> float_of_int (x * x))
+	      |> map C.(fun x -> F64.of_int (x * x))
 	      |> take (C.int 3))
-  |> iter C.(fun (x,y) -> seq (print_int x) (print_float y))
+  |> iter C.(fun (x,y) -> seq (print_int x) (F64.print y))
   end
 
   let testz3 =
@@ -466,7 +529,7 @@ module ZipTest(C: cde) = struct
 	    (
 	      iota (C.int 1)
 	      |> flat_map (fun x -> iota C.(x+int 1) |> take (C.int 3)))
-  |> iter C.(fun (y,x) -> seq (print_int x) (print_float y))
+  |> iter C.(fun (y,x) -> seq (print_int x) (F64.print y))
 
   let () = check_intfloat_list "zip: testz3"
     [(2, 1.); (3, 2.); (4, 3.); (3, 4.); (4, 5.)] testz3
@@ -480,14 +543,14 @@ module ZipTest(C: cde) = struct
 	    (
 	      of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0|]
 	      |> take (C.int 5))
-  |> iter C.(fun (x,y) -> seq (print_int x) (print_float y))
+  |> iter C.(fun (x,y) -> seq (print_int x) (F64.print y))
   end
 
   let testz4 =
       Raw.zip_raw
 	 (
 	  of_float_array [|1.0;2.0;3.0;4.0;5.0;6.0;7.0;8.0;9.0;10.0|]
-          |> map C.truncate
+          |> map C.F64.truncate
 	  |> take (C.int 12)
 	  |> filter even
 	  |> map square)
@@ -561,7 +624,6 @@ let _ = M.testz9
 
 module M = ZipTest(CCodePV)
 
-
 module ZipDeepTest(C: cde) = struct
   open Stream_cooked_fn.Make(C)
   open Utils(C)
@@ -582,7 +644,7 @@ module ZipDeepTest(C: cde) = struct
 	(iota (C.int 1)
             |> flat_map (fun x -> iota C.(x+int 1) |> take (C.int 3))))
     |> iter C.(fun (x,(y,z)) -> 
-        seq (print_float x) @@ seq (print_float y) (print_int z))
+        seq (F64.print x) @@ seq (F64.print y) (print_int z))
 
   let () = check_list 
       (fun c -> Scanf.bscanf c "%s\n%s\n%s\n" 
@@ -782,7 +844,6 @@ let _ = M.testz81
 
 module M = ZipDeepTest(CCodePV)
 
-
 (* ========== EXTRA FUNCTIONS ========== *)
 module DropTest(C: cde) = struct
   open Stream_cooked_fn.Make(C)
@@ -891,7 +952,6 @@ end
 module M = DropWhileTest(CodePV)
 module M = DropWhileTest(CCodePV)
 
-
 module TakeWhileTest(C: cde) = struct
   open Stream_cooked_fn.Make(C)
   open Utils(C)
@@ -929,22 +989,5 @@ module M = TakeWhileTest(CodePV)
 module M = TakeWhileTest(CCodePV)
 
 
-module MiscTest(C: cde) = struct
-  open Stream_cooked_fn.Make(C)
-  open Utils(C)
-
-  let () = Printf.printf "\nMisc Test, %s backend\n" C.ident
-
-  let test_sum = from_to C.(int 1) C.(int 10) |> sum_int
-  let () = check_int "test_sum" 55 @@ test_sum
-
-  let test_average = from_to C.(int 1) C.(int 10) |> average_int
-  let () = check_float "test_average" 5.5 @@ test_average
-  
-  let test_scan1 = from_to C.(int 1) C.(int 10) |> scan C.( + ) C.(int 0) |> sum_int
-  let () = check_int "test_scan1" (List.fold_left ( + ) 0 [1;3;6;10;15;21;28;36;45;55]) @@ test_scan1
-end
-module M = MiscTest(CodePV)
-module M = MiscTest(CCodePV)
 
 let () = print_endline "All done"

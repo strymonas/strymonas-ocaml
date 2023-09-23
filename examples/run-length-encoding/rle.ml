@@ -55,7 +55,7 @@ module Make(C:cde_ex) = struct
   (* advanced and more interesting use of flat_map *)
   let decode : byte cstream -> bool cstream =
     flat_map @@ fun el ->
-      Raw.pull_array el @@ fun i k ->
+      Raw.pull_array C.(el+ int 1) @@ fun i k ->
         let open C in
         if_ (i < el) (
           k (bool false)
@@ -78,20 +78,19 @@ let test1 =
 (*
 val test1 : (int array -> int list) code = .<
   fun arg1_1 ->
-    let t_2 = (Stdlib.Array.length arg1_1) - 1 in
-    let v_3 = Stdlib.ref [] in
-    (let v_4 = Stdlib.ref 0 in
-     for i_5 = 0 to t_2 do
-       let el_6 = Stdlib.Array.get arg1_1 i_5 in
-       let t_7 = el_6 > 0 in
-       let t_8 = ! v_4 in
-       if t_7
-       then (v_4 := 0; v_3 := (t_8 :: (! v_3)))
+    let v_2 = Stdlib.ref [] in
+    (let v_3 = Stdlib.ref 0 in
+     for i_4 = 0 to (Stdlib.Array.length arg1_1) - 1 do
+       let el_5 = Stdlib.Array.get arg1_1 i_4 in
+       let t_6 = el_5 > 0 in
+       let t_7 = ! v_3 in
+       if t_6
+       then (v_3 := 0; v_2 := (t_7 :: (! v_2)))
        else
-         (v_4 := (t_8 + 1);
-          if (! v_4) = 255 then (v_4 := 0; v_3 := (255 :: (! v_3))))
+         (v_3 := (t_7 + 1);
+          if (! v_3) = 255 then (v_3 := 0; v_2 := (255 :: (! v_2))))
      done);
-    ! v_3>.
+    ! v_2>.
 *)
 
 let[@warning "-8"] [0; 0; 1; 2]
@@ -120,24 +119,23 @@ let test2 =
 
 (*
 val test2 : (int array -> int list) code = .<
-  fun arg1_15 ->
-    let t_16 = (Stdlib.Array.length arg1_15) - 1 in
-    let v_17 = Stdlib.ref [] in
-    (let v_18 = Stdlib.ref 0 in
-     for i_19 = 0 to t_16 do
-       let el_20 = Stdlib.Array.get arg1_15 i_19 in
-       for i_21 = 0 to el_20 do
-         if i_21 < el_20
+  fun arg1_13 ->
+    let v_14 = Stdlib.ref [] in
+    (let v_15 = Stdlib.ref 0 in
+     for i_16 = 0 to (Stdlib.Array.length arg1_13) - 1 do
+       let el_17 = Stdlib.Array.get arg1_13 i_16 in
+       for i_18 = 0 to (el_17 + 1) - 1 do
+         if i_18 < el_17
          then
-           let t_23 = ! v_18 in
-           (v_18 := (t_23 + 1);
-            if (! v_18) = 255 then (v_18 := 0; v_17 := (255 :: (! v_17))))
+           let t_20 = ! v_15 in
+           (v_15 := (t_20 + 1);
+            if (! v_15) = 255 then (v_15 := 0; v_14 := (255 :: (! v_14))))
          else
-           if i_21 < 255
-           then (let t_22 = ! v_18 in v_18 := 0; v_17 := (t_22 :: (! v_17)))
+           if i_18 < 255
+           then (let t_19 = ! v_15 in v_15 := 0; v_14 := (t_19 :: (! v_14)))
        done
      done);
-    ! v_17>.
+    ! v_14>.
 *)
 
 let[@warning "-8"] true =
@@ -161,76 +159,74 @@ let bench =
     |> sum_int
 (*
 val bench : (int array * int array -> int) code = .<
-  fun (arg1_24, arg2_25) ->
-    let t_26 = (Stdlib.Array.length arg2_25) - 1 in
-    let t_27 = (Stdlib.Array.length arg1_24) - 1 in
-    let v_30 = Stdlib.ref 0 in
-    (let v_31 = Stdlib.ref 0 in
-     let v_33 = Stdlib.ref true in
-     let v_34 = Stdlib.ref false in
-     let v_35 = Stdlib.ref (Stdlib.Obj.obj (Stdlib.Obj.new_block 0 0)) in
-     let v_36 = Stdlib.ref 0 in
-     let i_37 = Stdlib.ref 0 in
-     while ((! i_37) <= t_27) && (! v_33) do
-       let iv_38 = ! i_37 in
-       i_37 := (iv_38 + 1);
-       (let el_39 = Stdlib.Array.get arg1_24 iv_38 in
-        let i_40 = Stdlib.ref 0 in
-        while ((! i_40) <= el_39) && (! v_33) do
-          let iv_41 = ! i_40 in
-          i_40 := (iv_41 + 1);
-          if iv_41 < el_39
+  fun (arg1_21, arg2_22) ->
+    let v_25 = Stdlib.ref 0 in
+    (let v_26 = Stdlib.ref 0 in
+     let v_28 = Stdlib.ref true in
+     let v_29 = Stdlib.ref false in
+     let v_30 = Stdlib.ref (Stdlib.Obj.obj (Stdlib.Obj.new_block 0 0)) in
+     let v_31 = Stdlib.ref 0 in
+     let i_32 = Stdlib.ref 0 in
+     while ((! i_32) < (Stdlib.Array.length arg1_21)) && (! v_28) do
+       let iv_33 = ! i_32 in
+       i_32 := (iv_33 + 1);
+       (let el_34 = Stdlib.Array.get arg1_21 iv_33 in
+        let i_35 = Stdlib.ref 0 in
+        while ((! i_35) < (el_34 + 1)) && (! v_28) do
+          let iv_36 = ! i_35 in
+          i_35 := (iv_36 + 1);
+          if iv_36 < el_34
           then
-            (let v_44 = Stdlib.ref true in
-             while ! v_44 do
-               if Stdlib.not (! v_34)
+            (let v_39 = Stdlib.ref true in
+             while ! v_39 do
+               if Stdlib.not (! v_29)
                then
-                 (if (! v_31) <= t_26
+                 (if (! v_26) < (Stdlib.Array.length arg2_22)
                   then
-                    ((let el_45 = Stdlib.Array.get arg2_25 (! v_31) in
-                      v_35 := el_45;
-                      v_36 := 0;
-                      v_34 := ((! v_36) <= (! v_35)));
-                     Stdlib.incr v_31)
-                  else (v_33 := false; v_44 := false));
-               if ! v_34
+                    ((let el_40 = Stdlib.Array.get arg2_22 (! v_26) in
+                      v_30 := el_40;
+                      v_31 := 0;
+                      v_29 := ((! v_31) < ((! v_30) + 1)));
+                     Stdlib.incr v_26)
+                  else (v_28 := false; v_39 := false));
+               if ! v_29
                then
-                 ((if (! v_36) < (! v_35)
-                   then (v_30 := (! v_30); v_44 := false)
+                 ((if (! v_31) < (! v_30)
+                   then (v_25 := (! v_25); v_39 := false)
                    else
-                     if (! v_36) < 255
-                     then (v_30 := ((! v_30) + 1); v_44 := false);
-                   Stdlib.incr v_36);
-                  v_34 := ((! v_36) <= (! v_35)))
+                     if (! v_31) < 255
+                     then (v_25 := ((! v_25) + 1); v_39 := false);
+                   Stdlib.incr v_31);
+                  v_29 := ((! v_31) < ((! v_30) + 1)))
                done)
           else
-            if iv_41 < 255
+            if iv_36 < 255
             then
-              (let v_42 = Stdlib.ref true in
-               while ! v_42 do
-                 if Stdlib.not (! v_34)
+              (let v_37 = Stdlib.ref true in
+               while ! v_37 do
+                 if Stdlib.not (! v_29)
                  then
-                   (if (! v_31) <= t_26
+                   (if (! v_26) < (Stdlib.Array.length arg2_22)
                     then
-                      ((let el_43 = Stdlib.Array.get arg2_25 (! v_31) in
-                        v_35 := el_43;
-                        v_36 := 0;
-                        v_34 := ((! v_36) <= (! v_35)));
-                       Stdlib.incr v_31)
-                    else (v_33 := false; v_42 := false));
-                 if ! v_34
+                      ((let el_38 = Stdlib.Array.get arg2_22 (! v_26) in
+                        v_30 := el_38;
+                        v_31 := 0;
+                        v_29 := ((! v_31) < ((! v_30) + 1)));
+                       Stdlib.incr v_26)
+                    else (v_28 := false; v_37 := false));
+                 if ! v_29
                  then
-                   ((if (! v_36) < (! v_35)
-                     then (v_30 := ((! v_30) + 1); v_42 := false)
+                   ((if (! v_31) < (! v_30)
+                     then (v_25 := ((! v_25) + 1); v_37 := false)
                      else
-                       if (! v_36) < 255
-                       then (v_30 := ((! v_30) + 1); v_42 := false);
-                     Stdlib.incr v_36);
-                    v_34 := ((! v_36) <= (! v_35)))
+                       if (! v_31) < 255
+                       then (v_25 := ((! v_25) + 1); v_37 := false);
+                     Stdlib.incr v_31);
+                    v_29 := ((! v_31) < ((! v_30) + 1)))
                  done)
           done)
        done);
-    ! v_30>.
+    ! v_25>.
 *)
 
 let[@warning "-8"] 6 =

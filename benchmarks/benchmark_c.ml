@@ -11,17 +11,19 @@ module type cde_ex     = module type of Cde_ex
 
 module CCodePV = struct
   include Pk_cde.Make(C_cde)
-  let injg : 'a C_cde.cde -> 'a cde = fun x -> {sta=Global; dyn=x}
 
   let print_one_array : string -> Format.formatter -> 
-  'a C_cde.tbase -> ('a array cde -> 'b cde) -> unit = fun name ppf tp body ->
-    C_cde.one_array_fun ~name ppf tp (fun arr -> injg arr |> body |> dyn);
+  'a tbase -> ('a arr -> 'b stm) -> unit = fun name ppf tp body ->
+    (arg_base tint @@ fun n -> 
+     arg_array n tp @@ fun a -> body a |> nullary_proc) 
+    |> pp_proc ~name ppf; 
     Format.fprintf ppf "@." 
-  let print_two_array : string -> Format.formatter -> 
-  'a C_cde.tbase * 'b C_cde.tbase -> 
-  ('a array cde * 'b array cde -> 'c cde) -> unit = fun name ppf tps body ->
-    C_cde.two_array_fun ~name ppf tps (fun (arr1,arr2) -> 
-      (injg arr1, injg arr2) |> body |> dyn);
+  let print_two_array : string -> Format.formatter -> 'a tbase * 'b tbase -> 
+  ('a arr * 'b arr -> 'c stm) -> unit = fun name ppf (tp1,tp2) body ->
+    (arg_base tint @@ fun n1 -> arg_array n1 tp1 @@ fun a1 -> 
+     arg_base tint @@ fun n2 -> arg_array n2 tp2 @@ fun a2 -> 
+     body (a1,a2) |> nullary_proc) 
+    |> pp_proc ~name ppf; 
     Format.fprintf ppf "@." 
 end
 
@@ -46,7 +48,7 @@ let encode : bool cstream -> byte cstream = fun st ->
 (* advanced and more interesting use of flat_map *)
 let decode : byte cstream -> bool cstream = fun st ->
   st |> flat_map (fun el ->
-    Raw.pull_array el @@ fun i k ->
+    Raw.pull_array C.(el + int 1) @@ fun i k ->
       let open C in
       if_ (i < el) (k (bool false))
           (if1 (i < int byte_max) (k (bool true))))

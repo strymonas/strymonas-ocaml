@@ -1,12 +1,16 @@
 module type cde = sig
   include module type of Cde_ex
-  val to_code1 : ('a cde -> 'b cde) -> ('a code -> 'b code)
-  val to_code2 : ('a cde * 'b cde -> 'c cde) -> ('a code * 'b code -> 'c code)
+  val to_code1 : ('a arr -> 'b stm) -> ('a array code -> 'b code)
+  val to_code2 : ('a arr * 'b arr -> 'c stm) -> 
+                 ('a array code * 'b array code -> 'c code)
 end
 
 module Benchmark_stream(C:cde) = struct
   module S = struct 
     include Stream_cooked_fn.Make(C)
+    type 'a exp = 'a C.exp
+    type 'a stm = 'a C.stm
+    type 'a arr = 'a C.arr
     type 'a stream = 'a cstream
 
     type byte = int                        (* element of an outer stream *)
@@ -26,7 +30,7 @@ module Benchmark_stream(C:cde) = struct
     (* advanced and more interesting use of flat_map *)
     let decode : byte cstream -> bool cstream = fun st ->
       st |> flat_map (fun el ->
-        Raw.pull_array el @@ fun i k ->
+        Raw.pull_array C.(el + int 1) @@ fun i k ->
           let open C in
           if_ (i < el) (k (bool false))
               (if1 (i < int byte_max) (k (bool true)))
@@ -79,8 +83,14 @@ module Benchmark_stream(C:cde) = struct
        decoding options;
    |];;
 
-   let test = .<
-    print_endline "Last checked: Jun 2, 2022";
+   let test = 
+     let v     = genlet v in
+     let vHi   = genlet vHi in 
+     let vLo   = genlet vLo in
+     let vFaZ  = genlet vFaZ in
+     let vZaF  = genlet vZaF in
+   .<
+    ignore (Sys.command "date");
     assert (.~(sum               v) == 450000000);
     assert (.~(sumOfSquares      v) == 2850000000);
     assert (.~(sumOfSquaresEven  v) == 1200000000);
