@@ -35,12 +35,19 @@
 (* Utilities *)
 
 (* Function composition *)
-let (<|>) f g = fun x -> f (g x)
+let (<<) f g = fun x -> f (g x)
+let (>>) f g = fun x -> f x |> g
+
+(* The identity function that makes CPS convenient *)
+let (let-) c k = c k
 
 module type cde        = module type of Cde
 module type stream_raw = module type of Stream_raw
 
-module Make(C: cde) : (stream_raw with type 'a cde = 'a C.cde and
+module Make(C: cde) : (stream_raw with type 'a exp = 'a C.exp and
+                                       type 'a stm = 'a C.stm and
+                                       type 'a mut = 'a C.mut and
+                                       type 'a arr = 'a C.arr and
                                        type 'a tbase = 'a C.tbase) = struct
 
 (* Open C only locally; otherwise its (&&) etc. operators interfere.
@@ -49,7 +56,10 @@ module Make(C: cde) : (stream_raw with type 'a cde = 'a C.cde and
 (*
 module C = (Trx_code : (cde with type 'a cde = 'a code))
 *)
-type 'a cde = 'a C.cde 
+type 'a exp   = 'a C.exp 
+type 'a stm   = 'a C.stm 
+type 'a mut   = 'a C.mut 
+type 'a arr   = 'a C.arr 
 type 'a tbase = 'a C.tbase
 
 (* Producer of a value. When evaluated repeatedly, may produce different values.
@@ -60,17 +70,17 @@ type 'a tbase = 'a C.tbase
    Termination condition is dealt with separately and is not part of
    emit.
 *)
-type 'a emit = ('a -> unit cde) -> unit cde
+type 'a emit = ('a -> unit stm) -> unit stm
 
 let fmap_emit : ('a -> 'b emit) -> 'a emit -> 'b emit = fun f s ->
   fun k -> s (fun x -> f x k)
 
 (* Another primitive producer: a pull array *)
-type 'a pull_array = {upb: int cde;                     (* exact upper bound *)
-                      index: int cde -> 'a emit}
+type 'a pull_array = {upe: int exp;      (* upper bound: exclusive: length *)
+                      index: int exp -> 'a emit}
 
 let fmap_pa : ('a -> 'b emit) -> 'a pull_array -> 'b pull_array = 
-  fun f ({index} as g) -> {g with index = fun i -> fmap_emit f (index i)}
+  fun f ({index} as g) -> {g with index = index >> fmap_emit f}
 
 
 type ('a,'b) eq = Refl : ('a,'a) eq
@@ -78,12 +88,12 @@ type ('a,'b) eq = Refl : ('a,'a) eq
 (* The type of the initializer *)
 type 'a init =
   (* Essentially let-insertion. The initializing expression may be stateful *)
-  | Ilet : 'a cde -> 'a cde init
+  | Ilet : 'a exp -> 'a exp init
   (* Mutable state with the given initial value 
      Eq is a hack: without it, OCaml compiants that it can't figure out the
-     type of 'a: because 'a cde is abstract
+     type of 'a: because 'a exp is abstract
    *)    
-  | Iref : 'a cde * ('a ref cde,'b) eq -> 'b init
+  | Iref : 'a exp * ('a mut,'b) eq -> 'b init
   (* Mutable state, not initialized.
      The given value is merely a hint to the backend about the
      type of the value. The back end doesn't have to initialize the value,
@@ -92,20 +102,25 @@ type 'a init =
      It is the responsibility of this module to assign to this cell
      before dereferencing it.
      Eq is a hack: without it, OCaml compiants that it can't figure out the
-     type of 'a: because 'a cde is abstract
+     type of 'a: because 'a exp is abstract
    *)    
-  | Iuref : 'a cde * ('a ref cde,'b) eq -> 'b init
-  (* An array with a statically known, and preferably rather small size *)
-  | Iarr : 'a cde array * 'a C.tbase * ('a array cde,'b) eq -> 'b init
+  | Iuref : 'a exp * ('a mut,'b) eq -> 'b init
+  (* An *non-empty*
+     array with a statically known, and preferably rather small size.
+     Generally mutable *)
+  | Iarr : 'a exp array * 'a C.tbase * ('a arr,'b) eq -> 'b init
   (* An uninitialized array of the given size. The second argument is
      is a type descriptor.
   *)
-  | Iuarr : int * 'a C.tbase * ('a array cde,'b) eq -> 'b init
+  | Iuarr : int * 'a C.tbase * ('a arr,'b) eq -> 'b init
+  (* A *non-empty* array with a statically known content.
+     It should not be mutated *)
+  | Istarr : 'a C.tbase * ('c-> 'a C.exp) * 'c array * ('a arr,'b) eq -> 'b init
 
 
 (* The termination condition: true to continue, false to terminate the stream.
    It should be idempotent and cheap to evaluate
-   XXX Perhaps I should use GExp of bool cde list, to later ensure
+   XXX Perhaps I should use GExp of bool exp list, to later ensure
    right association of conjunctions?
    XXX Perhaps treat GRef as a sort of global exit.
    So, init (GRef x) is like allocation of the label,
@@ -117,10 +132,10 @@ type 'a init =
  *)
 type goon = 
   | GTrue                               (* constant true *)
-  | GExp of bool cde                    (* should be cheap to evaluate *)
-  | GRef of bool ref cde                (* a boolean flag *)
+  | GExp of bool exp                    (* should be cheap to evaluate *)
+  | GRef of bool mut                    (* a boolean flag *)
 
-let cde_of_goon : goon -> bool cde = function
+let exp_of_goon : goon -> bool exp = function
   | GTrue  -> C.bool true
   | GExp x -> x
   | GRef x -> C.dref x
@@ -159,7 +174,7 @@ type 'a producer =
 type 'a linearity =
   | Linear
   | Nonlinear
-  | Filtered of ('a -> bool cde) list
+  | Filtered of ('a -> bool exp) list
 
   (* goon signals early termination
      Consider 'a emit as throwing an exception (`break', in C terms)
@@ -173,47 +188,52 @@ type 'a stream =
      *)    
   | Init  : 's init * ('s -> 'a stream) -> 'a stream
   | Flat  : 'a flat -> 'a stream
-  (* The stream to map on must produce 'b cde rather than
+  (* The stream to map on must produce 'b exp rather than
      any type. It becomes important when we linearize the stream.
    *)
-  | Nested : goon * 'b cde flat * ('b cde -> 'a stream) -> 'a stream
+  | Nested : goon * 'b exp flat * ('b exp -> 'a stream) -> 'a stream
 
 (* Start the main code *)
 
 (* It is a sort of a flat_map *)
-let initializing : 'z cde -> ('z cde -> 'a stream) -> 'a stream =
+let initializing : 'z exp -> ('z exp -> 'a stream) -> 'a stream =
   fun init sk -> 
     if C.is_static init then sk init
     else if C.is_fully_dynamic init then Init (Ilet init,sk)
     else sk (C.glet init)
 
 let initializing_ref : 
-    'z cde -> ('z ref cde -> 'a stream) -> 'a stream =
+    'z exp -> ('z mut -> 'a stream) -> 'a stream =
     fun init sk -> Init (Iref (init,Refl),sk)
+(* Non exported: used only internally. It's too confusing to others.
+   initializing_ref is preferred. *)
 let initializing_uref : 
-    'z cde -> ('z ref cde -> 'a stream) -> 'a stream =
+    'z exp -> ('z mut -> 'a stream) -> 'a stream =
     fun init sk -> Init (Iuref (init,Refl),sk)
 let initializing_arr : 
-    'z C.tbase -> 'z cde array -> ('z array cde -> 'a stream) -> 
-      'a stream =
+    'z C.tbase -> 'z exp array -> ('z arr -> 'a stream) -> 'a stream =
     fun tb init sk -> Init (Iarr (init,tb,Refl),sk)
 let initializing_uarr : 
-    'z C.tbase -> int -> ('z array cde -> 'a stream) -> 'a stream =
+    'z C.tbase -> int -> ('z arr -> 'a stream) -> 'a stream =
     fun tb size sk -> Init (Iuarr (size,tb,Refl),sk)
+let initializing_static_arr  : 'z tbase -> ('b -> 'z exp) -> 'b array -> 
+                       ('z arr -> 'a stream) -> 'a stream =
+    fun tb cnv arr sk -> Init (Istarr (tb,cnv,arr,Refl),sk)
 
 
-let pull_array : int cde -> (int cde -> 'a emit) -> 'a stream = 
-  fun upb idx -> 
-    Flat (Linear, GTrue, For {upb; index = (fun i k -> idx i k)})
+
+let pull_array : int exp -> (int exp -> 'a emit) -> 'a stream = 
+  fun upe idx -> 
+    Flat (Linear, GTrue, For {upe; index = (fun i k -> idx i k)})
 
 (* Change the For producer to the general producer
    Keep in mind that after we fuse filter, index is no longer linear!
 *)
 let for_unfold : 'a flat -> 'a stream = function 
   | (_,_,Unroll _) as sf -> Flat sf
-  | (m,g,For {upb;index}) ->
-    initializing_ref (C.int 0) @@ fun i ->
-      Flat (m, goon_conj g (GExp C.(dref i <= upb)),
+  | (m,g,For {upe;index}) ->
+      let- i = initializing_ref (C.int 0) in
+      Flat (m, goon_conj g (GExp C.(dref i < upe)),
                Unroll (fun k -> C.(seq (index (dref i) k) (incr i))))
 
 (* Create an infinite stream: run step in an infinite loop 
@@ -223,7 +243,7 @@ let infinite : 'a emit -> 'a stream = fun step ->
   Flat (Linear, GTrue, Unroll step)
 
 let rec guard : goon -> 'a stream -> 'a stream = fun g -> function
-  | Init (init,sk)        -> Init (init, guard g <|> sk)
+  | Init (init,sk)        -> Init (init, sk >> guard g)
   | Flat (m,g',p)         -> Flat (m, goon_conj g' g, p)
   | Nested (g',st,next)   -> Nested (goon_conj g' g, st, next)
 
@@ -248,7 +268,7 @@ let map_producer : ('a -> 'b emit) -> 'a producer -> 'b producer = fun tr ->
 
 (* fold-in filtered *)
    (* ensure right-associativity! The list is assumed non-empty *)
-let conjoin_preds : ('a -> bool cde) list -> ('a -> bool cde) = fun l ->
+let conjoin_preds : ('a -> bool exp) list -> ('a -> bool exp) = fun l ->
   fun x ->
     let rec loop = function
       | []   -> assert false
@@ -267,7 +287,7 @@ let normalize_flat : 'a flat -> 'a flat = function
        We also define map_raw' with the `direct-style' mapper
 
        The optional argument, ?linear, tells if the transformer is
-       linear -- that is, if the continuation (b -> unit cde) is invoked
+       linear -- that is, if the continuation (b -> unit stm) is invoked
        exactly once. 
        By default it is true.
        If the continuation ends up not being invoked in some cases
@@ -279,13 +299,13 @@ let normalize_flat : 'a flat -> 'a flat = function
 let rec map_raw : type a b. ?linear:bool ->
    (a -> b emit) -> a stream -> b stream =
    fun ?(linear=true) tr -> function
-     | Init (init, sk)    -> Init (init, map_raw ~linear tr <|> sk)
+     | Init (init, sk)    -> Init (init, sk >> map_raw ~linear tr)
      | Flat ((Filtered _,_,_) as sf) ->
          Flat (normalize_flat sf) |> map_raw ~linear tr
      | Flat (Linear,g,p)     -> 
          Flat ((if linear then Linear else Nonlinear),g, map_producer tr p)
      | Flat (Nonlinear,g,p)  -> Flat (Nonlinear,g, map_producer tr p)
-     | Nested (g,st,next)    -> Nested (g, st, map_raw ~linear tr <|> next)
+     | Nested (g,st,next)    -> Nested (g, st, map_raw ~linear tr << next)
  and map_raw' : type a b. (a -> b) -> a stream -> b stream =
    fun f st -> map_raw (fun e k -> k (f e)) st
 
@@ -311,17 +331,17 @@ let rec map_raw : type a b. ?linear:bool ->
    with such deep exits.
 *)
 
-let iter : ('a -> unit cde) -> 'a stream -> unit cde
+let iter : ('a -> unit stm) -> 'a stream -> unit stm
  = fun consumer st ->
-   let rec consume : type a. goon -> (a->unit cde) -> a producer -> unit cde = 
+   let rec consume : type a. goon -> (a->unit stm) -> a producer -> unit stm = 
      fun g consumer -> function
-     | For {upb;index} ->
-         let bp = if g = GTrue then None else Some (cde_of_goon g) in
-         C.for_ C.(int 0) upb ?guard:bp (fun i -> index i consumer)
+     | For {upe;index} ->
+         let bp = if g = GTrue then None else Some (exp_of_goon g) in
+         C.for_ C.(int 0) ~upe ?guard:bp (fun i -> index i consumer)
      | Unroll step ->
-         C.(while_ (cde_of_goon g) (step consumer))
+         C.(while_ (exp_of_goon g) (step consumer))
 
-    and loop : type a. (a -> unit cde) -> a stream -> unit cde =
+    and loop : type a. (a -> unit stm) -> a stream -> unit stm =
      fun consumer -> function
     | Init (Ilet i, sk) ->
         C.letl i @@ fun z -> loop consumer (sk z)
@@ -333,6 +353,8 @@ let iter : ('a -> unit cde) -> 'a stream -> unit cde
         C.new_array tb a @@ fun z -> loop consumer (sk z)
     | Init (Iuarr (n,tb,Refl), sk) ->
         C.new_uarray tb n @@ fun z -> loop consumer (sk z)
+    | Init (Istarr (tb,cnv,arr,Refl), sk) ->
+        C.new_static_array tb cnv arr @@ fun z -> loop consumer (sk z)
 
     | Flat (Filtered preds, g, st) -> 
          let pred = conjoin_preds preds in
@@ -346,28 +368,28 @@ let iter : ('a -> unit cde) -> 'a stream -> unit cde
          a termination flag
        *)           
     | Nested (g, st, next) ->
-        loop (loop consumer <|> guard g <|> next) (guard g (Flat st))
+        loop (loop consumer << guard g << next) (guard g (Flat st))
    in
     loop consumer st
 
 (* Other Transformers *)
 
 (* Apply the filter laws here *)
-let rec filter_raw : type a. (a -> bool cde) -> a stream -> a stream =
+let rec filter_raw : type a. (a -> bool exp) -> a stream -> a stream =
    fun pred -> function
-     | Init (init,sk)  -> Init (init, filter_raw pred <|> sk)
+     | Init (init,sk)  -> Init (init, filter_raw pred << sk)
      | Flat (Filtered p', g, p) ->
          Flat (Filtered (p' @ [pred]), g, p)
      | Flat (_, g, p) -> Flat (Filtered [pred], g, p)
-     | Nested (g,s,next) -> Nested (g,s,filter_raw pred <|> next)
+     | Nested (g,s,next) -> Nested (g,s,filter_raw pred << next)
 
 
 let rec flat_map_raw : type a b.
-      (a cde -> b stream) -> a cde stream -> b stream =
+      (a exp -> b stream) -> a exp stream -> b stream =
    fun next -> function
-     | Init (init,sk)       -> Init (init, flat_map_raw next <|> sk)
+     | Init (init,sk)       -> Init (init, flat_map_raw next << sk)
      | Flat sf              -> Nested (GTrue, sf, next)
-     | Nested (g,sf, next') -> Nested (g,sf, flat_map_raw next <|> next')
+     | Nested (g,sf, next') -> Nested (g,sf, flat_map_raw next << next')
 
 
 (* Zipping *)
@@ -406,7 +428,7 @@ let zip_emit : 'a emit -> 'b emit -> ('a*'b) emit = fun i1 i2 ->
 
 let zip_pull_array : 'a pull_array -> 'b pull_array -> ('a*'b) pull_array =
   fun p1 p2 ->
-   {upb  = C.imin (p1.upb) (p2.upb);
+   {upe  = C.imin (p1.upe) (p2.upe);
    index = (fun i -> zip_emit (p1.index i)  (p2.index i))}
 
 (* Linearization *)
@@ -491,8 +513,10 @@ let linearize_score : type a. a stream -> int =  fun st ->
   | Init (Iuref (i,Refl), sk) ->
       ignore (C.newuref i @@ fun z -> loop (sk z); C.unit)
   | Init (Iarr (a,tb,Refl), sk)  ->
-      ignore (C.new_array tb a @@ fun z -> loop (sk z); C.unit)
+      ignore (C.new_uarray tb 0 @@ fun z -> loop (sk z); C.unit)
   | Init (Iuarr (_,tb,Refl), sk)->
+      ignore (C.new_uarray tb 0 @@ fun z -> loop (sk z); C.unit)
+  | Init (Istarr (tb,_,_,Refl), sk)->
       ignore (C.new_uarray tb 0 @@ fun z -> loop (sk z); C.unit)
   | Flat (Linear,_,_) -> ()
   | Flat _            -> add 3
@@ -522,7 +546,7 @@ let linearize : type a. a stream -> a stream = fun st ->
     | (Filtered _,_,_) as sf -> normalize_flat sf |> loopnn
     | (Nonlinear, g, For _)  -> assert false
     | (Nonlinear, g, Unroll s) ->
-        let bp = if g = GTrue then None else Some (cde_of_goon g) in
+        let bp = if g = GTrue then None else Some (exp_of_goon g) in
         Flat (Linear, g, Unroll (fun k -> C.(cloop k bp s)))
   in
   (* linearize a nested stream *)
@@ -530,13 +554,13 @@ let linearize : type a. a stream -> a stream = fun st ->
      We follow the code explained earlier
    *)
   let rec nested : type a b. 
-    goon -> (b cde -> a stream) -> b cde flat -> a stream = 
+    goon -> (b exp -> a stream) -> b exp flat -> a stream = 
     fun gouter next -> function
     | (Filtered _,_,_) -> assert false
     | (_,_,For _)      -> assert false
     | (_,g,Unroll step) ->
     (* Guess a sample value produced by step -- or just its type *)
-    let outer_sample : b cde option =
+    let outer_sample : b exp option =
       let r = ref None in
       ignore (step (fun x -> (if !r = None then r := Some x); C.unit)); !r
     in match outer_sample with
@@ -565,23 +589,27 @@ let linearize : type a. a stream -> a stream = fun st ->
            while_ (dref again) @@
             seq
               (if1 (not (dref in_inner))
-                 (if_ (cde_of_goon g)
+                 (if_ (exp_of_goon g)
                    (step (fun x -> seq (xres := x)
                                    (seq i'
-                                     (in_inner := cde_of_goon g'))))
+                                     (in_inner := exp_of_goon g'))))
                    (seq (goon := bool false) (again := bool false))))
               (if1 (dref in_inner) @@
                  (seq (step' (fun x -> seq (k x) (again := bool false))) 
-                      (in_inner := cde_of_goon g')))
+                      (in_inner := exp_of_goon g')))
              )
           ))
 
             (* split off the initialization code and 
                return a `closure-converted stream' *)
   and split_init : 
-    type a w. unit cde -> a stream -> 
-              (unit cde -> (goon * a emit) -> w stream) -> w stream = 
+    type a w. unit stm -> a stream -> 
+              (unit stm -> (goon * a emit) -> w stream) -> w stream = 
     fun init st k -> match st with
+      (* If it can be lifted, doesn't need to be closure-converted *)
+    | Init (Ilet i, sk) when not (C.is_fully_dynamic i) ->
+      initializing i @@ fun zres ->
+      split_init init (sk zres) k
     | Init (Ilet i, sk) ->
       initializing_uref i @@ fun zres ->
       split_init C.(seq init (zres := i)) (sk (C.dref zres)) k
@@ -591,9 +619,6 @@ let linearize : type a. a stream -> a stream = fun st ->
     | Init (Iuref (i,Refl), sk) -> 
       initializing_uref i @@ fun zres ->
       split_init init (sk zres) k
-    | Init (Iarr (a,tb,Refl), sk) when Array.length a = 0 ->
-      initializing_arr tb a @@ fun zres ->
-      split_init init (sk zres) k
     | Init (Iarr (a,tb,Refl), sk) -> 
       initializing_uarr tb (Array.length a) @@ fun zres ->
       split_init 
@@ -602,8 +627,11 @@ let linearize : type a. a stream -> a stream = fun st ->
             loop (i+1) C.(seq acc (array_set zres (int i) a.(i)))
            in loop 0 init)
           (sk zres) k
-    | Init (Iuarr (n,i,Refl), sk) -> 
-      initializing_uarr i n @@ fun zres ->
+    | Init (Iuarr (n,t,Refl), sk) -> 
+      initializing_uarr t n @@ fun zres ->
+      split_init init (sk zres) k
+    | Init (Istarr (t,cvn,arr,Refl), sk) -> 
+      initializing_static_arr t cvn arr @@ fun zres ->
       split_init init (sk zres) k
     | Flat (Filtered _,_,_)  -> assert false
     | Flat (_,_,For _)       -> assert false
@@ -614,7 +642,7 @@ let linearize : type a. a stream -> a stream = fun st ->
        to do the full linearization
      *)
     main : type a. bool -> a stream -> a stream = fun unn -> function
-    | Init (init, sk)            -> Init (init, main unn <|> sk)
+    | Init (init, sk)            -> Init (init, main unn << sk)
     | Flat ((_,_,For _) as sf)   -> main unn (for_unfold sf)
     | Flat sf when unn           -> Flat (normalize_flat sf)
     | Flat sf                    -> loopnn sf
@@ -626,11 +654,7 @@ let linearize : type a. a stream -> a stream = fun st ->
   in main false st
 
 (* The dispatcher for zip *)
-(* XXX actually, linear FOR and Unfold can be zipped: it would remain FOR.
-   Generally, if we zip a linear Unfold, just map it over another stream
-   (without converting the other FOR to Unfold).
-   So, more FOR remain FOR after zipping, which improves the code
-*)
+
 let rec zip_raw : type a b. a stream -> b stream -> (a * b) stream =
   fun st1 st2 ->
    let swap st = map_raw' (fun (x,y) -> (y,x)) st in
@@ -638,11 +662,8 @@ let rec zip_raw : type a b. a stream -> b stream -> (a * b) stream =
    | (Init (init, sk),st2)  -> Init (init, fun z -> zip_raw (sk z) st2)
    | (st1,Init (init, sk))  -> Init (init, fun z -> zip_raw st1 (sk z))
 
-   (* Only zipping of two For is special; in other cases, convert For to While*)
    | (Flat (Linear,g1,For pa1), Flat (Linear,g2,For pa2)) ->
        Flat (Linear, goon_conj g1 g2, For (zip_pull_array pa1 pa2))
-   | (Flat ((Linear,_,For _) as sf1), st2) -> zip_raw (for_unfold sf1) st2
-   | (st1, Flat ((Linear,_,For _) as sf2)) -> zip_raw st1 (for_unfold sf2)
    | (Flat (Linear,g1,Unroll s1), Flat (Linear,g2,Unroll s2)) ->
        Flat (Linear, goon_conj g1 g2, Unroll (zip_emit s1 s2))
 
@@ -651,7 +672,11 @@ let rec zip_raw : type a b. a stream -> b stream -> (a * b) stream =
        guard g @@ map_raw (fun y k -> s (fun x -> k (x,y))) st2
    | (_, Flat (Linear,_,_)) -> zip_raw st2 st1 |> swap  
 
-    (* If both streams are non-linear, make one of them linear *)
+   (* If there are linear For remaining, convert to Unfold *)
+   | (Flat ((Linear,_,For _) as sf1), st2) -> zip_raw (for_unfold sf1) st2
+
+
+   (* If both streams are non-linear, make one of them linear *)
    | (st1, st2) -> 
        if linearize_score st2 > linearize_score st1
        then zip_raw (linearize st1) st2 else zip_raw st1 (linearize st2)

@@ -42,9 +42,8 @@ module TerminatedStream(C:cde_ex) = struct
   *)
   type 'a term_stream = 'a option stream
   
-  let of_arr_term : 'a array cde -> 'a cde term_stream = 
+  let of_arr_term : 'a arr -> 'a exp term_stream = 
   fun arr ->
-  let- arr = initializing arr in
   let- len = initializing C.(array_len arr) in
   let- i   = initializing_ref C.(int 0) in
   infinite C.(fun k ->
@@ -63,6 +62,7 @@ end
 module LookAhead(C:cde_ex) = struct
   open Stream_cooked_fn.Make(C)
   open TerminatedStream(C)
+  open Raw
 
   (* A stream with look-ahead: a stream whose elements are tuples
      of the current element and possibly the next element.
@@ -71,9 +71,8 @@ module LookAhead(C:cde_ex) = struct
   *)
   type 'a look_ahead_stream = ('a * 'a option) stream
   
-  let look_ahead : 'a tbase -> 'a cde term_stream -> 'a cde look_ahead_stream =
+  let look_ahead : 'a tbase -> 'a exp term_stream -> 'a exp look_ahead_stream =
   fun tbase st ->
-  let open Raw in
   let- prev     = initializing_ref C.(tbase_zero tbase) in
   let- saw_prev = initializing_ref C.(bool false) in
   st |> map_raw ~linear:false C.(function
@@ -103,14 +102,14 @@ module RLL(C:cde_ex) = struct
      true if this element is the last in its group (and so the next
      element (if any) will start a new group)
    *)
-  type 'a annot = 'a * bool cde
+  type 'a annot = 'a * bool Raw.exp
   let group : 'a look_ahead_stream -> 'a annot stream = 
     Raw.map_raw' @@ function
           | (x,Some next) -> C.(x, (not (x = next)))
           | (x,_)         -> C.(x,bool true)
 
   (* counting the group elements *)
-  let count : 'a annot stream -> ('a * int cde) stream = fun st ->
+  let count : 'a annot stream -> ('a * int Raw.exp) stream = fun st ->
     let- cnt = Raw.initializing_ref C.(int 0) in
     st |> Raw.map_raw ~linear:false @@ fun (x,break) k ->
       let open C in
@@ -130,7 +129,7 @@ module RLL(C:cde_ex) = struct
         print_int x @. print_int cnt)
 end
 
-module CCaml = Backends.MetaOCamlExt
+module CCaml = Backends.MetaOCaml
 
 module M = RLL(CCaml)
 let f = CCaml.one_arg_fun M.rll_print
@@ -188,6 +187,14 @@ let _ = Runcode.run f [|41;41;41;41;42;42;42;43;43;41|]
 let _ = Runcode.run f [||]
 
 let _ = Runcode.run f [|41;41;41;41;42;42;42;43;43|]
+(*
+41
+4
+42
+3
+43
+2
+*)
 
 let _ = Runcode.run f [|41|]
 (*
@@ -196,59 +203,56 @@ let _ = Runcode.run f [|41|]
 *)
 
 (* Generate C code *)
-module CC = Backends.CExt
+module CC = Backends.C
 module M = RLL(CC)
-let f = CC.print_one_array "rll" Format.std_formatter CC.tint M.rll_print
+let _ =
+  let open CC in
+  pp_proc ~name:"rll" Format.std_formatter @@
+  arg_base ~name:"n" tint @@ fun n ->
+  arg_array ~name:"a" n tint @@ fun a ->
+  nullary_proc (M.rll_print a)
 
 (*
-void rll(const int64_t * aa_1,const int64_t al_2)
-{
-   int64_t v_3 = 0;
-   int64_t v_4 = 0;
-   int v_5 = 0;
-   int64_t v_6 = 0;
-   while (v_6 <= al_2)
-   {
-      int64_t t_7;
-      t_7 = v_6;
-      v_6++;
-      if (t_7 < al_2)
+void rll(int64_t const n_1,int64_t * const a_2){
+  int64_t x_3 = 0;
+  int64_t x_4 = 0;
+  bool x_5 = false;
+  int64_t x_6 = 0;
+  while (x_6 <= n_1)
+  {
+    int64_t const t_7 = x_6;
+    x_6++;
+    if (t_7 < n_1)
+    {
+      int64_t const t_9 = a_2[t_7];
+      if (x_5)
       {
-         int64_t t_9;
-         t_9 = aa_1[t_7];
-         if (v_5)
-         {
-            int64_t t_10;
-            t_10 = v_4;
-            v_4 = t_9;
-            if (!(t_10 == t_9))
-            {
-               int64_t t_11;
-               t_11 = v_3;
-               v_3 = 0;
-               printf("%ld\n",(long)t_10);
-               printf("%ld\n",(long)(t_11 + 1));
-            }
-            else {
-                    v_3++;
-            }
-         }
-         else {
-                 v_4 = t_9;
-                 v_5 = 1;
-         }
+        int64_t const t_10 = x_4;
+        x_4 = t_9;
+        if (!(t_10 == t_9))
+        {
+          int64_t const t_11 = x_3;
+          x_3 = 0;
+          printf("%ld\n",t_10);
+          printf("%ld\n",t_11 + 1);
+        }
+        else 
+          x_3++;
       }
       else {
-              if (v_5)
-              {
-                 int64_t t_8;
-                 t_8 = v_3;
-                 v_3 = 0;
-                 printf("%ld\n",(long)v_4);
-                 printf("%ld\n",(long)(t_8 + 1));
-              }
+        x_4 = t_9;
+        x_5 = true;
       }
-   }}
+    }
+    else {if (x_5)
+            {
+              int64_t const t_8 = x_3;
+              x_3 = 0;
+              printf("%ld\n",x_4);
+              printf("%ld\n",t_8 + 1);
+            }}
+  }
+}
 *)
 
 

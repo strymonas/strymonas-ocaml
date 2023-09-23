@@ -8,24 +8,27 @@ stream_raw_fn.ml                Implementation: functor of Cde
         Back-ends
 cde.mli                         Code generation interface, used in strymonas
 cde_ex.mli                      Extended interface, for user actions
+cde_top.mli                     Making and running top-level functions
 
 pk_cde.ml                       Partially-known cde
 pk_coll.ml                      Partially-known collections
 
 backends.ml                     The convenience for selecting a backend
-backends/Trx/trx_code.ml        Instance for MetaOCaml code
+backends/Trx/trx_code_common.ml        Instance for MetaOCaml code
+backends/Trx/trx_code.ml        Instance for MetaOCaml code (bytecode)
+backends/Trx/trx_code_native.ml        native code
 
-backends/C/c_ast.mli            AST for C
 backends/C/c_cde.ml             Instance for C
+        The following is the offshoring back-end, shared with MetaOCaml
+backends/C/c_ast.mli            AST for C
 backends/C/c_pp.ml              Pretty-print the C AST into C code 
-
+backends/C/offshoringIR.mli     Offshoring IR
+backends/C/offshoringIR.ml
+backends/C/offshoringIR_pp.ml
 
 
         High-level interface
 stream_cooked.mli               Interface
 stream_cooked_fn.ml             Implementation: functor of Cde
-
-stream_window.mli               Windowing
-stream_window_fn.ml             Implementation: functor of Cde
 
 Makefile                How to make it

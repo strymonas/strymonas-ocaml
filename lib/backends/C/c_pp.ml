@@ -11,7 +11,7 @@ let rec pr_typ : formatter -> typ -> unit = fun ppf -> function
   | Tshort          -> pp_print_string ppf "short"
   | Tint            -> pp_print_string ppf "int"
   | Tlong           -> pp_print_string ppf "long"
-  | Tint64          -> pp_print_string ppf "int64_t"
+  | Tint64          -> pp_print_string ppf "int64_t" (* needs <stdint.h> *)
   | Tuint           -> pp_print_string ppf "unsigned int"
   | Tulong          -> pp_print_string ppf "unsigned long"
   | Tfloat          -> pp_print_string ppf "float"
@@ -20,16 +20,23 @@ let rec pr_typ : formatter -> typ -> unit = fun ppf -> function
   | Tptr ctp        -> fprintf ppf "%a *" pr_ctype ctp
   | Tarray (n,ctp)  -> fprintf ppf "%a [%d]" pr_ctype ctp n
  and pr_ctype : formatter -> ctype -> unit = fun ppf {specs;typ} ->
-   fprintf ppf "%a%a" pr_specs specs pr_typ typ 
- and pr_specs : formatter -> spec list -> unit = fun ppf specs ->
-     List.iter (fun e -> fprintf ppf "%a " pr_spec e) specs
- and pr_spec : formatter -> spec -> unit = fun ppf -> function
-  | S_const         -> pp_print_string ppf "const"
-  | S_volatile      -> pp_print_string ppf "volatile"
-  | S_restrict      -> pp_print_string ppf "restrict"
-  | S_static        -> pp_print_string ppf "static"
-  | S_extern        -> pp_print_string ppf "extern"
-  | S_inline        -> pp_print_string ppf "inline"
+      fprintf ppf "%a%a%a" pr_specs_storage specs pr_typ typ pr_quals specs
+ (* They are always leading, so leave the trailing space *)
+ and pr_specs_storage : formatter -> spec list -> unit = fun ppf ->
+     List.iter @@ function 
+       | S_static        -> pp_print_string ppf "static "
+       | S_extern        -> pp_print_string ppf "extern "
+       | S_inline        -> pp_print_string ppf "inline "
+       | _               -> ()
+ (* They are always trailing, so have the leading space 
+   According to C spec, the qualifiers should really be trailing
+  *)
+ and pr_quals : formatter -> spec list -> unit = fun ppf ->
+     List.iter @@ function 
+       | S_const    -> pp_print_string ppf " const"
+       | S_volatile -> pp_print_string ppf " volatile"
+       | S_restrict -> pp_print_string ppf " restrict"
+       | _          -> ()
 
 let pr_const : formatter -> constant -> unit = fun ppf -> function
   | Const_num str    -> pp_print_string ppf str
@@ -74,16 +81,16 @@ let pr_binop : formatter -> binary_operator -> unit = fun ppf op ->
 
 let binmodops : (binary_modifier * string) list = [
   (ASSIGN, "=");
-  (ADD_ASSIGN, "+=");
-  (SUB_ASSIGN, "-=");
-  (MUL_ASSIGN, "*=");
-  (DIV_ASSIGN, "/=");
-  (MOD_ASSIGN, "%=");
+  (ADD_ASSIGN,  "+=");
+  (SUB_ASSIGN,  "-=");
+  (MUL_ASSIGN,  "*=");
+  (DIV_ASSIGN,  "/=");
+  (MOD_ASSIGN,  "%=");
   (BAND_ASSIGN, "&=");
-  (BOR_ASSIGN, "|=");
-  (XOR_ASSIGN, "^=");
-  (SHL_ASSIGN, "<<=");
-  (SHR_ASSIGN, ">>=");
+  (BOR_ASSIGN,  "|=");
+  (XOR_ASSIGN,  "^=");
+  (SHL_ASSIGN,  "<<=");
+  (SHR_ASSIGN,  ">>=");
  ]
 
 let pr_assoc : ('a * string) list -> formatter -> 'a -> unit = fun lst ppf op ->
@@ -103,7 +110,7 @@ let rec pr_exp : formatter -> expression -> unit = fun ppf -> function
   | Unary (op,Var v) -> fprintf ppf "%a%s" pr_unop op v
   | Unary (op,exp)   -> fprintf ppf "%a(%a)" pr_unop op pr_exp exp
   | Label_addr l     -> fprintf ppf "&&%s" l
-  | Binary (op,e1,e2) -> fprintf ppf "%a@ %a@ %a"
+  | Binary (op,e1,e2) -> fprintf ppf "@[%a@ %a %a@]"
         pr_paren_exp e1 pr_binop op pr_paren_exp e2
   | Cond(e1,e2,e3)   -> fprintf ppf "(%a ? %a : %a)" 
         pr_exp e1 pr_exp e2 pr_exp e3
@@ -112,99 +119,118 @@ let rec pr_exp : formatter -> expression -> unit = fun ppf -> function
         (pp_print_list ~pp_sep:pp_sep_comma pr_exp) args
   | Comma ([],exp)   -> pr_exp ppf exp
   | Comma (sts,exp)  -> fprintf ppf "(%a,%a)"
-        (pp_print_list ~pp_sep:pp_sep_comma pr_subexp) sts
+        (pp_print_list ~pp_sep:pp_sep_comma pr_stmt_simple) sts
         pr_exp exp
-  | TYPE_SIZEOF ctp     -> fprintf ppf "sizeof(%a)" pr_ctype ctp
   | Index (e1,e2)       -> fprintf ppf "%a[%a]" pr_paren_exp e1 pr_exp e2
   | Memberof (e,fn)     -> fprintf ppf "%a.%s"  pr_paren_exp e fn
   | Memberofptr (e,fn)  -> fprintf ppf "%a->%s" pr_paren_exp e fn
  and pr_paren_exp : formatter -> expression -> unit = fun ppf -> function
-   | Const _ | Var _ | Cond _ as e -> pr_exp ppf e
-   | e -> fprintf ppf "(%a)" pr_exp e
+   | Const _ | Var _ | Cond _ | Call _ as e -> pr_exp ppf e
+   | e -> fprintf ppf "@[(%a)@]" pr_exp e
  (* many statements like if (e) ... contain expressions in parens *)
  and pr_always_paren_exp : formatter -> expression -> unit = fun ppf e ->
    fprintf ppf "@[<2>(%a)@]" pr_exp e
 
  and pr_typedname : formatter -> typedname -> unit = fun ppf -> function
   | (v,{typ=Tarray(n,ct);specs}) ->
-      fprintf ppf "%a%a %s[%d]" pr_specs specs pr_ctype ct v n
+      fprintf ppf "%a%a%a %s[%d]" 
+        pr_specs_storage specs pr_ctype ct pr_quals specs v n
   | (v,ct) -> fprintf ppf "%a %s" pr_ctype ct v
 
+ (* Prints trailing semi-colon *)
  and pr_defn : formatter -> definition -> unit = fun ppf (tn,init) ->
   pr_typedname ppf tn;
   match init with
   | Init_none -> fprintf ppf ";"
-  | Init_single e -> fprintf ppf "@[<2> =@ %a;@]" pr_exp e
-  | Init_many es  -> fprintf ppf " = {@[<2>%a@]};"
-        (pp_print_list ~pp_sep:pp_sep_comma pr_exp) es
+  | _         -> fprintf ppf "@[<2> =@ %a;@]" pr_init init
 
-(* Prints trailing semi-colon, except for blocks *)
- and pr_stmt : formatter -> statement -> unit = fun ppf -> function
-  | NOP              -> fprintf ppf ";"
-  | CALL _| UNMOD _ | BIMOD _ as e -> fprintf ppf "%a;" pr_subexp e
-  | BLOCK b  -> pr_block ppf b
-  | SEQUENCE stmts -> fprintf ppf "%a" (pp_print_list pr_stmt) stmts
-  | IF(e,s1,NOP) -> fprintf ppf "if %a@,%a" pr_always_paren_exp e pr_substmt s1
-  | IF(e,s1,s2) -> fprintf ppf "if %a@,%a@ else %a"
-        pr_always_paren_exp e pr_substmt s1 pr_substmt s2
-  | WHILE(e,stmt) -> fprintf ppf "while %a@,%a" 
-        pr_always_paren_exp e pr_substmt stmt
-  | DOWHILE(e,stmt) -> fprintf ppf "do@,%a@,while %a;"
-        pr_substmt stmt pr_always_paren_exp e
-  | FOR(sinit,e,sincr,stmt) -> fprintf ppf "for @[<2>(%a@ %a;@ %a)@]@,%a"
-        pr_stmt sinit pr_exp e pr_subexp sincr pr_substmt stmt
-  | BREAK          -> fprintf ppf "break;"
-  | CONTINUE       -> fprintf ppf "continue;"
-  | RETURN Nothing -> fprintf ppf "return;"
-  | RETURN e -> fprintf ppf "return %a;" pr_paren_exp e
-  | SWITCH(e,stmt) -> fprintf ppf "switch %a@,%a"
-        pr_always_paren_exp e pr_substmt stmt
-  | CASE(e,stmt)   -> fprintf ppf "case %a:@,%a"
-        pr_exp e pr_substmt stmt
-  | CASERANGE(e1,e2,stmt) -> fprintf ppf "case %a...%a:@,%a"
-        pr_exp e1 pr_exp e2 pr_substmt stmt
-  | DEFAULT stmt   -> fprintf ppf "default:@ %a;@," pr_substmt stmt
-  | LABEL (l,stmt) -> fprintf ppf "%s:@ %a" l pr_substmt stmt
-  | GOTO l         -> fprintf ppf "goto %s;" l
-  | COMPGOTO e     -> fprintf ppf "goto *%a;" pr_paren_exp e
-  (* the increment expression of a for-loop does not have a trailing
-     semicolon 
-   *)
- and pr_subexp : formatter -> statement -> unit = fun ppf -> function
+ and pr_init : formatter -> init_expression -> unit = fun ppf -> function
+  | Init_none -> ()
+  | Init_single e -> pr_exp ppf e
+  | Init_compound es -> fprintf ppf "{@[<2>%a@]};"
+        (pp_print_list ~pp_sep:pp_sep_comma pr_init_compound) es
+
+ and pr_init_compound : formatter -> (init_designator * init_expression) -> 
+   unit = fun ppf -> function
+     | (Indes_none,i) -> pr_init ppf i
+     | (id,ie) -> 
+         let rec pr_indes ppf = function
+           | Indes_none -> ()
+           | Indes_field (fld,id) -> fprintf ppf ".%s%a" fld pr_indes id
+           | Indes_index (e,id) -> fprintf ppf "[%a]%a" pr_exp e pr_indes id 
+           | Indes_index_range (e1,e2) -> 
+               fprintf ppf "[%a...%a]" pr_exp e1 pr_exp e2 
+         in
+         fprintf ppf "%a = %a" pr_indes id pr_init ie
+
+ (* Does NOT print any terminating character *)
+ and pr_stmt_simple : formatter -> simple_statement -> unit = 
+  fun ppf -> function
+  | NOP              -> ()
   | CALL(ef,args)    -> fprintf ppf "%a@[<2>(%a)@]" pr_paren_exp ef
         (pp_print_list ~pp_sep:pp_sep_comma pr_exp) args
   | UNMOD(POSINCR,e) -> fprintf ppf "%a++" pr_paren_exp e
   | UNMOD(POSDECR,e) -> fprintf ppf "%a--" pr_paren_exp e
   | BIMOD (op,e1,e2) -> fprintf ppf "@[%a %a@ %a@]"
         pr_paren_exp e1 (pr_assoc binmodops) op pr_exp e2
-  | _ -> assert false
 
-  (* if as substamenents require special handling, due to their
-     poor grammar
-   *)
- and pr_substmt : formatter -> statement -> unit = fun ppf -> function
-   | IF _ | SEQUENCE _ | DOWHILE _ as stmt ->
-       fprintf ppf "{@[<v 2>%a@]}" pr_stmt stmt
-   | BLOCK b -> pr_block ppf b
-   | stmt -> fprintf ppf "@;<1 2>%a" pr_stmt stmt
+ (* Prints trailing semi-colon *)
+ and pr_los : formatter -> let_or_statement -> unit = fun ppf -> function
+  | LET d  -> pr_defn ppf d 
+  | STMT s -> fprintf ppf "%a;" pr_stmt_simple s
 
- and pr_block : formatter -> block -> unit = fun ppf {blabels;bdefs;bstmts} ->
+ (* Prints trailing semi-colon, except for blocks *)
+ and pr_stmt : formatter -> statement -> unit = fun ppf -> function
+  | SIMPLE s  -> pr_los ppf s
+  | BLOCK []  -> ()
+  | BLOCK [s] -> pr_stmt ppf s
+  | BLOCK b   -> pr_block ppf b
+  | IF(e,b1,[]) -> fprintf ppf "if %a@,%a" pr_always_paren_exp e pr_subbl b1
+  | IF(e,b1,b2) -> fprintf ppf "if %a@,%a@ else %a"
+        pr_always_paren_exp e pr_subbl b1 pr_subbl b2
+  | WHILE(e,b)  -> fprintf ppf "while %a@,%a" 
+        pr_always_paren_exp e pr_subbl b
+  | DOWHILE(e,b) -> fprintf ppf "do@,%a@,while %a;"
+        pr_subbl b pr_always_paren_exp e
+  | FOR(sinit,e,sincr,b) -> fprintf ppf "for @[<2>(%a@ %a;@ %a)@]%a"
+        pr_los sinit pr_exp e pr_stmt_simple sincr pr_subbl b
+  | BREAK          -> fprintf ppf "break;"
+  | CONTINUE       -> fprintf ppf "continue;"
+  | RETURN Nothing -> fprintf ppf "return;"
+  | RETURN e       -> fprintf ppf "return %a;" pr_paren_exp e
+  | SWITCH(e,b)    -> fprintf ppf "switch %a@,%a"
+        pr_always_paren_exp e pr_subbl b
+  | CASE(e,b)      -> fprintf ppf "case %a:@,%a"
+        pr_exp e pr_subbl b
+  | CASERANGE(e1,e2,b) -> fprintf ppf "case %a...%a:@,%a"
+        pr_exp e1 pr_exp e2 pr_subbl b
+  | DEFAULT b      -> fprintf ppf "default:@ %a;@," pr_subbl b
+  | LABEL l        -> fprintf ppf "%s:;@," l
+  | GOTO l         -> fprintf ppf "goto %s;" l
+  | COMPGOTO e     -> fprintf ppf "goto *%a;" pr_paren_exp e
+
+ (* block that is a part of if, while, etc. *)
+ and pr_subbl : formatter -> block -> unit = fun ppf -> function
+   | []  -> fprintf ppf "@;<0 2>;"
+   | [IF _ | DOWHILE _ as s] -> fprintf ppf "{@[<v 2>%a@]}" pr_stmt s
+   | [s] -> fprintf ppf "@;<0 2>%a" pr_stmt s
+   | b   -> pr_block ppf b
+
+ (*
    let pr_labels ppf = function [] -> () | ls ->
      fprintf ppf "__label__ %a@,"
         (pp_print_list ~pp_sep:pp_sep_comma pp_print_string) ls
-   in
-   if blabels = [] && bdefs = [] then
-     fprintf ppf "{@[<v 2>@,%a@]@,}"
-     (pp_print_list pr_stmt) bstmts
-   else
-     fprintf ppf "{@[<v 2>@,%a%a@,%a@]@,}"
-       pr_labels blabels
-       (pp_print_list pr_defn) bdefs
-       (pp_print_list pr_stmt) bstmts
+ *)
+ (* always print the braces *)
+ and pr_block : formatter -> block -> unit = fun ppf -> function
+   | [] -> pp_print_string ppf "{}"
+   | stmts ->
+       fprintf ppf "{@;<0 2>@[<v 0>%a@]@,}"
+         (pp_print_list pr_stmt) stmts
 
-let rec pr_decl : formatter -> declaration -> unit = fun ppf -> function
+let pr_decl : formatter -> declaration -> unit = fun ppf -> function
  | FUNDEF (ct,v,args,body) ->
-     fprintf ppf "@,%a %s(%a)@,%a@,"
+     fprintf ppf "@,@[<v 0>%a %s@[(%a)@]%a@]@."
        pr_ctype ct v 
        (pp_print_list ~pp_sep:pp_sep_comma pr_typedname) args
        pr_block body

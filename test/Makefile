@@ -1,9 +1,8 @@
-# Some tests are MetaOCaml-specific
-TOP=metaocaml
 OCAMLC=metaocamlc
+TOP=metaocaml
 OCAMLOPT=metaocamlopt
 
-.SUFFIXES: .ml .mli .cmo .cmi .cmx
+.SUFFIXES: .ml .mli .cmo .cmi .cmx .tex .pdf
 
 
 LIBDIR=../lib
@@ -17,4 +16,8 @@ test: standard
 .PHONY: standard
 standard:
 	${TOP} ${INCLUDES} ${LIB} test_stream.ml
+
+.PHONY: window
+window:
+	${TOP} ${INCLUDES} ${LIB} test_window.ml
 

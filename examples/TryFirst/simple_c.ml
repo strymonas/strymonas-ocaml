@@ -13,7 +13,7 @@
 
 (* C backend *)
 
-(* The following functor is quoted from the module Backends. So we could have
+(* The following module is quoted from the module Backends. So we could have
 just said 
    module C = Backends.C
 
@@ -22,33 +22,7 @@ MetaOCaml to compile it. We want the present file to be compilable by
 OCaml only.
 *)
 
-module CGen(C: module type of C_cde) = struct
-  include Pk_cde.Make(C)
-
-  let ident = "C"
-
-  let print ?name x =
-    C.nullary_fun ?name Format.std_formatter (dyn x);
-    Format.fprintf Format.std_formatter "@." 
-
-  let print_one_array : string -> Format.formatter -> 
-  'a tbase -> ('a array cde -> 'b cde) -> unit = fun name ppf tp body ->
-    C.one_array_fun ~name ppf tp (fun arr -> inj_global arr |> body |> dyn);
-    Format.fprintf ppf "@." 
-  
-  let print_two_array : string -> Format.formatter -> 
-  'a tbase * 'b tbase -> 
-  ('a array cde * 'b array cde -> 'c cde) -> unit = fun name ppf tps body ->
-    C.two_array_fun ~name ppf tps (fun (arr1,arr2) -> 
-      (inj_global arr1, inj_global arr2) |> body |> dyn);
-    Format.fprintf ppf "@." 
-
-  (* only for basic types *)
-  let run : 'a cde -> 'a = fun x -> dyn x |> C.run
-  let run_capture_output x = C.run_capture_output (dyn x)
-  let run_output_to_command : unit cde -> string -> unit = fun x -> C.run_output_to_command (dyn x)  
-end
-module C = CGen(C_cde)
+module C = Pk_cde.Make(C_cde)
 
 (* Again, Open the strymonas library: higher-level interface, which see
    ../../lib/stream_cooked.mli
@@ -72,28 +46,26 @@ let ex2 = ex1 |> filter C.(fun e -> e mod (int 17) > int 7)
                    |> take C.(int 10) |> sum
 
 (* The generated code *)
-let _ = C.print ~name:"fn" ex2
+let _ = C.print_code ~name:"fn" ex2
 
 (*
-int64_t fn()
-{
-   int64_t v_1 = 0;
-   int64_t v_2 = 10;
-   int64_t v_3 = 1;
-   while (v_2 > 0)
-   {
-      int64_t t_4;
-      int64_t t_5;
-      t_4 = v_3;
-      v_3++;
-      t_5 = t_4 * t_4;
-      if ((t_5 % 17) > 7)
-      {
-         v_2--;
-         v_1 = v_1 + t_5;
-      }
-   }
-   return v_1;}
+int64_t fn(){
+  int64_t x_1 = 0;
+  int64_t x_2 = 10;
+  int64_t x_3 = 1;
+  while (x_2 > 0)
+  {
+    int64_t const t_4 = x_3;
+    x_3++;
+    int64_t const t_5 = t_4 * t_4;
+    if ((t_5 % 17) > 7)
+    {
+      x_2--;
+      x_1 = x_1 + t_5;
+    }
+  }
+  return x_1;
+}
 *)
 
 (* We can compile it, and run capturing its output *)

@@ -31,24 +31,23 @@ let ex1 = iota C.(int 1) |> map C.(fun e -> e * e)
    combinator, under the name sum_int, defined as below.
 *)
 let sum = fold C.(+) C.(int 0)
-(* val sum : int cstream -> int cde = <fun> *)
+(* val sum : int cstream -> int Raw.stm = <fun> *)
 
 let ex2 = ex1 |> filter C.(fun e -> e mod (int 17) > int 7) 
                    |> take C.(int 10) |> sum
 (*
-  val ex2 : int cde =
-  {C.sta = C.Unk;
-   dyn = .<
-    let v_1 = Stdlib.ref 0 in
-    (let v_2 = Stdlib.ref 10 in
-     let v_3 = Stdlib.ref 1 in
-     while (! v_2) > 0 do
-       let t_4 = ! v_3 in
-       Stdlib.incr v_3;
-       (let t_5 = t_4 * t_4 in
-        if (t_5 mod 17) > 7 then (Stdlib.decr v_2; v_1 := ((! v_1) + t_5)))
-       done);
-    ! v_1>. }
+  val ex2 : int Raw.stm =
+  C.Stm .<
+   let v_1 = Stdlib.ref 0 in
+   (let v_2 = Stdlib.ref 10 in
+    let v_3 = Stdlib.ref 1 in
+    while (! v_2) > 0 do
+      let t_4 = ! v_3 in
+      Stdlib.incr v_3;
+      (let t_5 = t_4 * t_4 in
+       if (t_5 mod 17) > 7 then (Stdlib.decr v_2; v_1 := ((! v_1) + t_5)))
+      done);
+   ! v_1>. 
 *)
 
 (* generate code *)
@@ -70,14 +69,12 @@ val ex2_code : int code = .<
 (* The code may be written to a file, to compile later *)
 let () =
   let file_name = "/var/tmp/ex2.ml" in
-  let c = close_code ex2_code in
   let cout = open_out file_name in
   let ppf = Format.formatter_of_out_channel cout in
-  format_code ppf c; Format.fprintf ppf "%!"; close_out cout
+  Codelib.print_code ppf ex2_code; Format.fprintf ppf "%!"; close_out cout
 
 (* Or, it can be run right away *)
 let[@warning "-8"] 853 = Runcode.run ex2_code
-
 
 
 (* Next example:
@@ -102,10 +99,10 @@ let[@warning "-8"] 32 = Runcode.run ex_dot1
 (* In ex_dot1, the arrays to work on were referred directly in the generator;
    the generated code had these arrays as literals.
    One can write a bit more general pipeline, parameterized by arrays
-   (values of the type [int array cde], to be precise)
+   (values of the type [int arr], to be precise)
 *)
 let ex_dot (arr1,arr2) = zip_with C.( * ) (of_arr arr1) (of_arr arr2) |> sum
-(* val ex_dot : int array cde * int array cde -> int cde = <fun> *)
+(* val ex_dot : int Raw.arr * int Raw.arr -> int Raw.stm = <fun> *)
 
 (* One can still use the literal arrays as before: *)
 let ex_dot1' =
@@ -132,16 +129,18 @@ let[@warning "-8"] 32 = Runcode.run ex_dot1'
 let ex_dot_fn = C.two_arg_fun ex_dot
 (*
 val ex_dot_fn : (int array * int array -> int) code = .<
-  fun (arg1_24, arg2_25) ->
-    let t_26 = (Stdlib.Array.length arg2_25) - 1 in
-    let t_27 = (Stdlib.Array.length arg1_24) - 1 in
-    let v_28 = Stdlib.ref 0 in
-    for i_29 = 0 to if t_27 < t_26 then t_27 else t_26 do
-      (let el_30 = Stdlib.Array.get arg1_24 i_29 in
-       let el_31 = Stdlib.Array.get arg2_25 i_29 in
-       v_28 := ((! v_28) + (el_30 * el_31)))
+  fun (arg1_18, arg2_19) ->
+    let v_20 = Stdlib.ref 0 in
+    for i_21 = 0 to
+      (if (Stdlib.Array.length arg1_18) < (Stdlib.Array.length arg2_19)
+       then Stdlib.Array.length arg1_18
+       else Stdlib.Array.length arg2_19) - 1
+      do
+      (let el_22 = Stdlib.Array.get arg1_18 i_21 in
+       let el_23 = Stdlib.Array.get arg2_19 i_21 in
+       v_20 := ((! v_20) + (el_22 * el_23)))
     done;
-    ! v_28>.
+    ! v_20>.
 *)
 
 (* which me may apply to any two suitable arrays *)
@@ -158,13 +157,13 @@ let[@warning "-8"] 32 =
  *)
 let cart (s1,s2) =
   s1 |> flat_map (fun e1 -> s2 |> Raw.map_raw' (fun e2 -> (e1,e2)))
-(* val cart : 'a cstream * 'b stream -> ('a cde * 'b) stream = <fun> *)
+(* val cart : 'a cstream * 'b stream -> ('a Raw.exp * 'b) stream = <fun> *)
 
 let ex_cart (a1,a2) =
   cart (of_arr a1, of_arr a2) |>
-  iter C.(fun (e1,e2) -> seq (print_int e1) (print_float e2))
+  iter C.(fun (e1,e2) -> seq (print_int e1) (C.F64.print e2))
 (*
-val ex_cart : int array cde * float array cde -> unit cde = <fun>
+val ex_cart : int Raw.arr * float Raw.arr -> unit Raw.stm = <fun>
 *)
 
 (* The generated code shows nested loops, predictably
@@ -172,25 +171,23 @@ val ex_cart : int array cde * float array cde -> unit cde = <fun>
 let cart_fn = C.two_arg_fun ex_cart
 (*
 val cart_fn : (int array * float array -> unit) code = .<
-  fun (arg1_32, arg2_33) ->
-    let t_34 = (Stdlib.Array.length arg1_32) - 1 in
-    let t_37 = (Stdlib.Array.length arg2_33) - 1 in
-    for i_35 = 0 to t_34 do
-      let el_36 = Stdlib.Array.get arg1_32 i_35 in
-      for i_38 = 0 to t_37 do
-        let el_39 = Stdlib.Array.get arg2_33 i_38 in
-        (Stdlib.Format.print_int el_36; Stdlib.Format.force_newline ());
+  fun (arg1_24, arg2_25) ->
+    for i_26 = 0 to (Stdlib.Array.length arg1_24) - 1 do
+      let el_27 = Stdlib.Array.get arg1_24 i_26 in
+      for i_28 = 0 to (Stdlib.Array.length arg2_25) - 1 do
+        let el_29 = Stdlib.Array.get arg2_25 i_28 in
+        (Stdlib.Format.print_int el_27; Stdlib.Format.force_newline ());
         Stdlib.Format.printf
           (CamlinternalFormatBasics.Format
              ((CamlinternalFormatBasics.Float
                  ((CamlinternalFormatBasics.Float_flag_,
                     CamlinternalFormatBasics.Float_g),
                    CamlinternalFormatBasics.No_padding,
-                   CamlinternalFormatBasics.No_precision,
+                   (CamlinternalFormatBasics.Lit_precision 17),
                    (CamlinternalFormatBasics.Formatting_lit
                       (CamlinternalFormatBasics.Force_newline,
-                        CamlinternalFormatBasics.End_of_format)))), "%g@\n"))
-          el_39
+                        CamlinternalFormatBasics.End_of_format)))),
+               "%.17g@\n")) el_29
       done
     done>.
 *)
@@ -217,26 +214,24 @@ let cart_fn' =
   let ex_cart (a1,a2) =
    cart (of_arr a1, of_arr a2) |>
    Raw.map_raw' (fun (x,y) -> C.pair x y) |>
-   fold (fun l x -> C.cons x l) (C.nil ()) |>
-   C.cde_app1 .<List.rev>. in
+   (* fold is a statement. If we need to process its result, we need fold_ *)
+   fold_ Desc.Single (fun l x -> C.cons x l) (C.nil ()) 
+     (fun x -> C.cde_app1 .<List.rev>. x |> C.ret) in
    C.two_arg_fun ex_cart
 
 (*
-val cart_fn' :
-  ('_weak9 array * '_weak10 array -> ('_weak9 * '_weak10) list) code = .<
-  fun (arg1_97, arg2_98) ->
-    let t_100 = (Stdlib.Array.length arg1_97) - 1 in
-    let t_99 = (Stdlib.Array.length arg2_98) - 1 in
-    Stdlib.List.rev
-      (let v_101 = Stdlib.ref [] in
-       for i_102 = 0 to t_100 do
-         (let el_103 = Stdlib.Array.get arg1_97 i_102 in
-          for i_104 = 0 to t_99 do
-            let el_105 = Stdlib.Array.get arg2_98 i_104 in
-            v_101 := ((el_103, el_105) :: (! v_101))
-          done)
-       done;
-       ! v_101)>.
+ val cart_fn' :
+  ('_weak1 array * '_weak2 array -> ('_weak1 * '_weak2) list) code = .<
+  fun (arg1_30, arg2_31) ->
+    let v_32 = Stdlib.ref [] in
+    for i_33 = 0 to (Stdlib.Array.length arg1_30) - 1 do
+      (let el_34 = Stdlib.Array.get arg1_30 i_33 in
+       for i_35 = 0 to (Stdlib.Array.length arg2_31) - 1 do
+         let el_36 = Stdlib.Array.get arg2_31 i_35 in
+         v_32 := ((el_34, el_36) :: (! v_32))
+       done)
+    done;
+    Stdlib.List.rev (! v_32)>.
 *)
 
 let[@warning "-8"] 
@@ -251,35 +246,32 @@ let[@warning "-8"]
 let join1 =
   C.two_arg_fun @@ fun (a1,a2) ->
   cart (of_arr a1, of_arr a2) |>
-  Raw.filter_raw C.(fun (e1,e2) -> e1 = truncate e2) |>
-  iter C.(fun (e1,e2) -> seq (print_int e1) (print_float e2))
+  Raw.filter_raw C.(fun (e1,e2) -> e1 = F64.truncate e2) |>
+  iter C.(fun (e1,e2) -> seq (print_int e1) (F64.print e2))
 
 (*
 val join1 : (int array * float array -> unit) code = .<
-  fun (arg1_40, arg2_41) ->
-    let t_42 = (Stdlib.Array.length arg1_40) - 1 in
-    let t_45 = (Stdlib.Array.length arg2_41) - 1 in
-    for i_43 = 0 to t_42 do
-      let el_44 = Stdlib.Array.get arg1_40 i_43 in
-      for i_46 = 0 to t_45 do
-        let el_47 = Stdlib.Array.get arg2_41 i_46 in
-        if el_44 = (Stdlib.truncate el_47)
+  fun (arg1_37, arg2_38) ->
+    for i_39 = 0 to (Stdlib.Array.length arg1_37) - 1 do
+      let el_40 = Stdlib.Array.get arg1_37 i_39 in
+      for i_41 = 0 to (Stdlib.Array.length arg2_38) - 1 do
+        let el_42 = Stdlib.Array.get arg2_38 i_41 in
+        if el_40 = (Stdlib.truncate el_42)
         then
-          ((Stdlib.Format.print_int el_44; Stdlib.Format.force_newline ());
+          ((Stdlib.Format.print_int el_40; Stdlib.Format.force_newline ());
            Stdlib.Format.printf
              (CamlinternalFormatBasics.Format
                 ((CamlinternalFormatBasics.Float
                     ((CamlinternalFormatBasics.Float_flag_,
                        CamlinternalFormatBasics.Float_g),
                       CamlinternalFormatBasics.No_padding,
-                      CamlinternalFormatBasics.No_precision,
+                      (CamlinternalFormatBasics.Lit_precision 17),
                       (CamlinternalFormatBasics.Formatting_lit
                          (CamlinternalFormatBasics.Force_newline,
                            CamlinternalFormatBasics.End_of_format)))),
-                  "%g@\n")) el_47)
+                  "%.17g@\n")) el_42)
       done
     done>.
-  
 *)
 
 
@@ -308,36 +300,33 @@ let join_fn =
    cart (of_arr t1, of_arr t2) |>
    (* WHERE clauses *)
    Raw.filter_raw C.(fun (e1,e2) -> snd e1 = fst e2) |>
-   Raw.filter_raw C.(fun (e1,e2) -> truncate (snd e2) > int 5) |>
+   Raw.filter_raw C.(fun (e1,e2) -> F64.truncate (snd e2) > int 5) |>
    (* SELECTion *)
-   Raw.map_raw' C.(fun (e1,e2) -> pair (fst e1) (snd e2 *. float 2.)) |>
+   Raw.map_raw' C.(fun (e1,e2) -> F64.(pair (fst e1) (snd e2 *. lit 2.))) |>
    (* Accumulation of the result *)
-   fold (fun l x -> C.cons x l) (C.nil ()) |>
-   C.cde_app1 .<List.rev>. in
+   fold_ Desc.Single (fun l x -> C.cons x l) (C.nil ()) 
+     (fun x -> C.cde_app1 .<List.rev>. x |> C.ret) in
    C.two_arg_fun join
 
 (* 
 val join_fn :
-  (('_weak8 * int) array * (int * float) array -> ('_weak8 * float) list)
+  (('_weak3 * int) array * (int * float) array -> ('_weak3 * float) list)
   code = .<
-  fun (arg1_104, arg2_105) ->
-    let t_107 = (Stdlib.Array.length arg1_104) - 1 in
-    let t_106 = (Stdlib.Array.length arg2_105) - 1 in
-    Stdlib.List.rev
-      (let v_108 = Stdlib.ref [] in
-       for i_109 = 0 to t_107 do
-         (let el_110 = Stdlib.Array.get arg1_104 i_109 in
-          for i_111 = 0 to t_106 do
-            let el_112 = Stdlib.Array.get arg2_105 i_111 in
-            if
-              ((Stdlib.snd el_110) = (Stdlib.fst el_112)) &&
-                ((Stdlib.truncate (Stdlib.snd el_112)) > 5)
-            then
-              v_108 := (((Stdlib.fst el_110), ((Stdlib.snd el_112) *. 2.)) ::
-                (! v_108))
-          done)
-       done;
-       ! v_108)>.
+  fun (arg1_8, arg2_9) ->
+    let v_10 = Stdlib.ref [] in
+    for i_11 = 0 to (Stdlib.Array.length arg1_8) - 1 do
+      (let el_12 = Stdlib.Array.get arg1_8 i_11 in
+       for i_13 = 0 to (Stdlib.Array.length arg2_9) - 1 do
+         let el_14 = Stdlib.Array.get arg2_9 i_13 in
+         if
+           ((Stdlib.snd el_12) = (Stdlib.fst el_14)) &&
+             ((Stdlib.truncate (Stdlib.snd el_14)) > 5)
+         then
+           v_10 := (((Stdlib.fst el_12), ((Stdlib.snd el_14) *. 2.)) ::
+             (! v_10))
+       done)
+    done;
+    Stdlib.List.rev (! v_10)>.
 *)
 
 let[@warning "-8"] 
@@ -376,22 +365,22 @@ let same_st =
    themselves).
 
 val same_st : int code = .<
-  let v_47 = Stdlib.ref 0 in
-  (let v_48 = Stdlib.ref 10 in
-   let v_49 = Stdlib.ref 1 in
-   let v_50 = Stdlib.ref 10 in
-   let v_51 = Stdlib.ref 1 in
-   while ((! v_50) > 0) && ((! v_48) > 0) do
-     Stdlib.decr v_50;
-     (let t_52 = ! v_51 in
-      Stdlib.incr v_51;
-      if (t_52 mod 3) = 0
+  let v_20 = Stdlib.ref 0 in
+  (let v_21 = Stdlib.ref 10 in
+   let v_22 = Stdlib.ref 1 in
+   let v_23 = Stdlib.ref 10 in
+   let v_24 = Stdlib.ref 1 in
+   while ((! v_23) > 0) && ((! v_21) > 0) do
+     Stdlib.decr v_23;
+     (let t_25 = ! v_24 in
+      Stdlib.incr v_24;
+      if (t_25 mod 3) = 0
       then
-        (Stdlib.decr v_48;
-         (let t_53 = ! v_49 in
-          Stdlib.incr v_49; v_47 := ((! v_47) + (t_53 + t_52)))))
+        (Stdlib.decr v_21;
+         (let t_26 = ! v_22 in
+          Stdlib.incr v_22; v_20 := ((! v_20) + (t_26 + t_25)))))
      done);
-  ! v_47>. 
+  ! v_20>. 
 *)
 let[@warning "-8"] 24 = Runcode.run same_st
 
@@ -418,39 +407,38 @@ let paper_test_code = C.to_code paper_test
 
 (*
 val paper_test_code : unit code = .<
-  let t_71 = [|0;1;2;3|] in
-  let v_70 = Stdlib.ref 12 in
-  let v_72 = Stdlib.ref 0 in
-  let v_73 = Stdlib.ref 1 in
-  while ((! v_70) > 0) && ((! v_72) <= 3) do
-    let t_77 = ! v_73 in
-    Stdlib.incr v_73;
-    (let v_78 = Stdlib.ref 3 in
-     let v_79 = Stdlib.ref (t_77 + 1) in
-     while ((! v_78) > 0) && (((! v_70) > 0) && ((! v_72) <= 3)) do
-       Stdlib.decr v_78;
-       (let t_80 = ! v_79 in
-        Stdlib.incr v_79;
-        if (t_80 mod 2) = 0
+  let t_28 = [|0;1;2;3|] in
+  let v_27 = Stdlib.ref 12 in
+  let v_29 = Stdlib.ref 1 in
+  let v_33 = Stdlib.ref 0 in
+  while ((! v_27) > 0) && ((! v_33) < 4) do
+    let t_34 = ! v_29 in
+    Stdlib.incr v_29;
+    (let v_35 = Stdlib.ref 3 in
+     let v_36 = Stdlib.ref (t_34 + 1) in
+     while ((! v_35) > 0) && (((! v_27) > 0) && ((! v_33) < 4)) do
+       Stdlib.decr v_35;
+       (let t_37 = ! v_36 in
+        Stdlib.incr v_36;
+        if (t_37 mod 2) = 0
         then
-          (let v_81 = Stdlib.ref true in
-           while ! v_81 do
-             (Stdlib.decr v_70;
-              (let el_82 = Stdlib.Array.get t_71 (! v_72) in
-               let t_83 = el_82 * el_82 in
-               if (t_83 mod 2) = 0
+          (let v_38 = Stdlib.ref true in
+           while ! v_38 do
+             ((let el_39 = Stdlib.Array.get t_28 (! v_33) in
+               let t_40 = el_39 * el_39 in
+               Stdlib.decr v_27;
+               if (t_40 mod 2) = 0
                then
-                 let t_84 = t_83 * t_83 in
-                 (v_81 := false;
-                  (Stdlib.Format.print_int t_84;
+                 (let t_41 = t_40 * t_40 in
+                  v_38 := false;
+                  (Stdlib.Format.print_int t_41;
                    Stdlib.Format.force_newline ());
-                  Stdlib.Format.print_int t_80;
+                  Stdlib.Format.print_int t_37;
                   Stdlib.Format.force_newline ()));
-              Stdlib.incr v_72);
-             v_81 := ((! v_81) && (((! v_70) > 0) && ((! v_72) <= 3))) done))
+              Stdlib.incr v_33);
+             v_38 := ((! v_38) && (((! v_27) > 0) && ((! v_33) < 4))) done))
        done)
     done>.
-  
 *)
 
 let () = print_endline "All done"

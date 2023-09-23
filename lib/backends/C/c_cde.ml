@@ -1,493 +1,343 @@
-(* An implementation of the Cde signature, using C AST
- * XXX Future work: add to var reference an indicator if a variable
-   is mutable (it is if created by newref or passed as such as an
-   argument). Then we can tell if an expression depends on a mutable
-   variable, and generate const modifiers and add initializers to
-   variable declarations more often.
-   XXX: a better idea: use C99, which allows to intersperse declarations
-   and expressions.
+(* An implementation of the Cde signature, using Offshoring IR *)
+
+(*
+#load "offshoring.cma";;
 *)
 
-open C_ast
+let ident = "C"
 
-module Seq : sig
-  type 'a t
-  val empty    : 'a t
-  val is_empty : 'a t -> bool
-  val push : 'a -> 'a t -> 'a t
-  val push_first : 'a -> 'a t -> 'a t
-  (* Eliminating exact duplicates *)
-  val merge : 'a t -> 'a t -> 'a t
-  val to_list : 'a t -> 'a list
- end = struct
-   type 'a t = 'a list                 (* in REVERSE order *)
-   let empty = []
-   let is_empty x = x = []
-   let push x l = x :: l
-   let push_first x l = l @ [x]
-   let merge l1 l2 = List.(filter (fun x -> not (memq x l1)) l2 @ l1) 
-   let to_list = List.rev
-end
+module I = OffshoringIR
 
+let (>>) f g = fun x -> f x |> g
+
+(* Base type representation *)
 type 'a tbase_desc = ..
 type 'a tbase_desc +=
   | TBbool  : bool tbase_desc
   | TBint   : int tbase_desc
-  | TBfloat : float tbase_desc
 
 type 'a tbase = {desc: 'a tbase_desc;
-                 ctyp: typ;             (* The C type *)
-                 zero:  expression;     (* The zero literal of that type;
+                 ityp: I.typ;          (* IR type *)
+                 zero: I.exp;          (* The zero literal of that type;
                                            often used as initializer *)
-                 printf_fmt: string;    (* format for printf *)
-                                        (* Adjuster for printf: cast, etc. *)
-                 printf_cast: expression->expression;
-                 deser: string -> 'a    (* For OCaml type *)
+                 printf_fn: I.exp -> I.block;
+                 deser: string -> 'a   (* Used in unit tests *)
                 }
 
-(* type representations, and the correspondence between OCaml and C types
+(* type representations, and the correspondence between OCaml and IR types
 *)
-let tbool  : bool  tbase = 
-   {desc=TBbool; ctyp=Tbool; zero=(Const (Const_num "false"));
-    printf_fmt="%s";
-    printf_cast=(fun e -> Cond(e,Const(Const_string "true"),
-                                 Const(Const_string "false")));
+let make_printf : string -> I.exp list -> I.block = fun fmt es ->
+   I.(of_exp @@ FunCall (I.OP.name "printf", (Const (Const_string fmt) :: es)))
+
+let tbool  : bool  tbase =
+   {desc=TBbool; ityp=I.TBool; zero=I.(Const (Const_bool false));
+    printf_fn = I.(fun e -> make_printf "%s" 
+                             [Cond(e,[Const(Const_string "true")],
+                                     [Const(Const_string "false")])]);
     deser=((=)"true")}
 
-let tint   : int   tbase = 
-   {desc=TBint; ctyp=Tint64; zero=(Const (Const_num "0"));
-    printf_fmt="%ld";                   (* XXX Actually should use %lld and
-                                           long long *)
-    printf_cast=(fun e -> Cast({typ=Tlong;specs=[]},e));
+(* The default int type. Our benchmarks use int accumulators that do need
+   64-bits
+*)
+let tint_ntyp = I.I64
+let tint   : int   tbase =
+   {desc=TBint; ityp=I.TNum tint_ntyp; 
+    printf_fn = (fun e -> make_printf "%ld" [e]);
+    zero=I.(Const (Const_num (tint_ntyp,"0")));
     deser=int_of_string;}
 
-let tfloat : float tbase = 
-   {desc=TBfloat; ctyp=Tdouble; zero=(Const (Const_num "0"));
-    printf_fmt="%g";
-    printf_cast=Fun.id;
-    deser=float_of_string;}
 
-type 'a cde = 
-    {vars: definition Seq.t;            (* local bindings *)
-     inits: statement Seq.t;            (* statements, including initializers
-                                           of the bindings *)
-     desc: 'a desc}
- and 'a desc =
-  | Stm  : unit desc                     (* statement *)
-    (* ordinary expression. Its type is never void, that is, not unit! *)
-    (* If we have local bindings, we also need statements that
-       initialize these bindings.
-       vars is the sequence of local binding.
-       So, consider this as a sequence of statements followed by an expression.
-       For example:
-          int x; int i;
-          x = 0;
-          for(i=0; i<10; i++) x += i;
-          x + 10
-     *)
-  | Exp  : 'a tbase * expression -> 'a desc  (* only of base types, for now *)
-  | Vref : 'a tbase * varname    -> 'a ref desc  (* mutable variable *)
-    (* An array is represented by a variable denoting array
-       (of the type tbase []) plus an integer expression for the array
-       size. That expression is either a variable or a constant.
-     *)
-  | Varr : 'a tbase * varname * expression -> 'a array desc
+(* Expressions *)
+type 'a exp = 'a tbase * I.exp             (* Expressions, only of base types *)
 
-let cbtype : type a. ?specs:spec list -> a tbase -> ctype =
-  fun ?(specs=[]) {ctyp;_} -> {specs;typ=ctyp}
+let exp : 'a tbase -> I.exp -> 'a exp =
+  fun typ exp -> (typ,exp)
 
-let of_desc : 'a desc -> 'a cde = fun desc -> 
-  {vars=Seq.empty; inits=Seq.empty; desc}
-
-let exp : expression -> 'a tbase -> 'a cde =
-  fun exp typ -> of_desc (Exp(typ,exp))
-
+let exp_app : 'a tbase -> I.OP.t -> I.exp list -> 'a exp =
+  fun typ op args -> exp typ @@ I.(FunCall(op,args))
 
 (* The initializer for the given type *)
-let tbase_init : type a. a tbase -> a cde = fun ({zero;_} as typ) ->
-   exp zero typ
+let tbase_init : type a. a tbase -> a exp = fun ({zero;_} as typ) ->
+   exp typ zero
 
 let tbase_zero = tbase_init
 
 
-(* Utilities *)
-let assign : expression -> expression -> statement = fun el er ->
-  BIMOD(ASSIGN,el,er)
+let bool : bool -> bool exp = fun x -> exp tbool I.(Const (Const_bool x))
 
-let assign_var : varname -> expression -> statement = fun v er ->
-  assign (Var v) er
+let unary_op : type a b. a tbase * I.OP.t * b tbase -> a exp -> b exp =
+  fun (_,op,tout) (_,exp) ->
+    exp_app tout op [exp]
+
+let binary_op : type a b c. a tbase * b tbase * I.OP.t * c tbase -> 
+  a exp -> b exp -> c exp =
+  fun (_,_,op,tout) (_,e1) (_,e2) ->
+    exp_app tout op [e1;e2]
+
+let not  : bool exp -> bool exp = unary_op (tbool,I.OP.NOT,tbool)
+
+let (&&) : bool exp -> bool exp -> bool exp = fun (ty,e1) (_,e2) -> 
+  exp ty @@ I.And (e1,[e2])
+let (||) : bool exp -> bool exp -> bool exp = fun (ty,e1) (_,e2) -> 
+  exp ty @@ I.Or (e1,[e2])
+
+let int : int -> int exp = fun x -> 
+  exp tint I.(Const (Const_num (tint_ntyp, string_of_int x)))
+let ( ~-)  = unary_op (tint,I.OP.NEG tint_ntyp,tint)
+
+let ( + )  = binary_op (tint,tint,I.OP.ADD tint_ntyp,tint)
+let ( - )  = binary_op (tint,tint,I.OP.SUB tint_ntyp,tint)
+let ( * )  = binary_op (tint,tint,I.OP.MUL tint_ntyp,tint)
+let ( / )  = binary_op (tint,tint,I.OP.DIV tint_ntyp,tint)
+let (mod)  = binary_op (tint,tint,I.OP.MOD tint_ntyp,tint)
+let logand = binary_op (tint,tint,I.OP.BAND tint_ntyp,tint)
+let logor  = binary_op (tint,tint,I.OP.BOR tint_ntyp,tint)
+
+let ( =) = binary_op (tint,tint,I.OP.EQ tint_ntyp,tbool)
+let ( <) = binary_op (tint,tint,I.OP.LT tint_ntyp,tbool)
+let ( >) = binary_op (tint,tint,I.OP.GT tint_ntyp,tbool)
+let (>=) = binary_op (tint,tint,I.OP.GE tint_ntyp,tbool)
+let (<=) = binary_op (tint,tint,I.OP.LE tint_ntyp,tbool)
+
+let cond : bool exp -> 'a exp -> 'a exp -> 'a exp =
+  fun (_,ce) (_,te) (ty,ee) ->
+    exp ty @@ I.Cond(ce,[te],[ee])
+(* XXX Add min/max to offshoringIR *)
+let imin : int exp -> int exp -> int exp = fun x y -> cond (x < y) x y
+let imax : int exp -> int exp -> int exp = fun x y -> cond (x < y) y x
 
 
-(* Utility for binary operation *)
-let merge : 'a cde -> 'b cde ->
-  (definition Seq.t -> statement Seq.t -> 'a desc -> 'b desc -> 'c cde) ->
-  'c cde = 
-  fun {vars=vars1;inits=i1;desc=desc1} 
-      {vars=vars2;inits=i2;desc=desc2} 
-      k ->
-   k (Seq.merge vars1 vars2) (Seq.merge i1 i2) desc1 desc2
+(* Statements *)
+(* Type of statements *)
+type 'a tys = 
+  | TVoid : unit tys
+  | TBase : 'a tbase -> 'a tys
 
-(* Utility for ternary operation *)
-let merge3 : 'a cde -> 'b cde -> 'c cde ->
-  (definition Seq.t -> statement Seq.t -> 
-    'a desc -> 'b desc -> 'c desc -> 'd cde) -> 'd cde = 
-  fun {vars=vars1;inits=i1;desc=desc1} 
-      {vars=vars2;inits=i2;desc=desc2} 
-      {vars=vars3;inits=i3;desc=desc3} 
-      k ->
-   k (Seq.merge vars1 (Seq.merge vars2 vars3)) 
-     (Seq.merge i1 (Seq.merge i2 i3)) desc1 desc2 desc3
+type 'a stm = 'a tys * I.block                      (* Statements *)
 
-let merge4 : 'a cde -> 'b cde -> 'c cde -> 'd cde ->
-  (definition Seq.t -> statement Seq.t -> 
-    'a desc -> 'b desc -> 'c desc -> 'd desc -> 'e cde) -> 'e cde = 
-  fun {vars=vars1;inits=i1;desc=desc1} 
-      {vars=vars2;inits=i2;desc=desc2} 
-      {vars=vars3;inits=i3;desc=desc3} 
-      {vars=vars4;inits=i4;desc=desc4} 
-      k ->
-   k (Seq.merge vars1 (Seq.merge vars2 (Seq.merge vars3 vars4))) 
-     (Seq.merge i1 (Seq.merge i2 (Seq.merge i3 i4))) 
-     desc1 desc2 desc3 desc4
+let unit : unit stm = (TVoid,I.Unit)
+
+let stmt : I.stmt -> unit stm = fun s -> (TVoid, I.(Block (Sq.empty,s)))
+
+let stmt_app : I.OP.t -> I.exp list -> unit stm =
+  fun op args -> (TVoid, I.(of_exp (FunCall(op,args))))
+
+let seq  : unit stm -> 'a stm -> 'a stm = fun (_,s1) (ty,s2) ->
+  (ty,I.seq s1 s2)
+
+let ( @. )  : unit stm -> 'a stm -> 'a stm = seq
+let seqs    : unit stm list -> unit stm = function
+  | [] -> unit
+  | h::t -> List.fold_left (@.) h t
+
+let ret  : 'a exp -> 'a stm = fun (ty,e) -> (TBase ty, I.of_exp e)
+
+(* Simple i/o, useful for debugging. Newline at the end *)
+let print_int : int exp -> unit stm = fun (ty,e) ->
+   (TVoid, make_printf "%ld\n" [e])
 
 
-(* Often occurring sequential composition *)
-let seq : type a. unit cde -> a cde -> a cde = fun c1 c2 ->
-  merge c1 c2 @@ fun vars inits d1 d2 ->
-  match d1 with
-  | Stm -> {vars;inits;desc=d2}
-  | Exp _  -> assert false
-let ( @. )  : unit cde -> 'a cde -> 'a cde = seq
-
-let unit : unit cde = of_desc Stm
-
-(* possibly let-insertion 
-   Continuing the earlier example: if we had as an expression
-          int x; int i;
-          x = 0;
-          for(i=0; i<10; i++) x += i;
-          x + 10
-  then after glet it becomes
-          int x; int i; int y;
-          x = 0;
-          for(i=0; i<10; i++) x += i;
-          y = x + 10;
-          y
+(* Local let, without movement
+   Permissible only in statement contexts
 *)
+let letl : 'a exp -> (('a exp -> 'w stm) -> 'w stm) = 
+  fun (ty,exp) k ->
+    match exp with
+    (* Too simple (atomic) to let-bind *)
+    | Const _ | LocalVar _ | GlobalVar _ -> k (ty,exp)
+    | _ -> 
+        let open I in
+        let id = genvarname "t" in
+        let binding = (Some {id;ty=ty.ityp;mut=Cnst;attrs=[]},exp) in
+        let (bt,b) = k (ty,LocalVar id) in
+        match b with 
+        | Unit -> (bt, of_exp exp)
+        | Block (bs,stm) ->
+            (bt, Block (Sq.(one binding @ bs), stm))
 
-let genname : string -> string =
-  let counter = ref 0 in
-  fun nm -> incr counter; nm ^ "_" ^ string_of_int !counter
+let glet : 'a exp -> 'a exp = Fun.id    (* possibly let-insertion, at some
+                                           higher place. That is, movement
+                                           is OK
+                                         *)
 
-let glet : type a. a cde -> a cde = fun x -> x
+let if_  : bool exp -> unit stm -> unit stm -> unit stm =
+  fun (_,ce) (_,st) (_,se) -> stmt @@ I.If(ce,st,Some se)
 
-(* Local let, without movement *)
-let letl : type a w. a cde -> ((a cde -> w cde) -> w cde) = fun e k ->
- match e with
-   | {desc=Stm} -> 
-       failwith "let for expression of unit type: doesn't make sense"
-   | {desc=Vref _} as e -> k e
-   | {desc=Varr _} as e -> k e
- (* If var is mutable, we definitely want to create the binding!
-    For mutable v, Var v actually means variable dereference
-   | {desc=Exp (_,Var _)}
-  *)
-   | {desc=Exp (_,Const _)} as e -> k e
-         (* Perhaps consider expressions like x+1 to be simple and
-            not warranting let-insertion: if we can show that x is immutable
-            (which is easy to show: x is single-assignment unless it is
-            created by a newref)
-          *)
-   | {vars;inits;desc=Exp (typ,e)} ->
-       let v = genname "t" in
-       let def = ((v,cbtype typ),Init_none) in
-       let vars  = Seq.push def vars in
-       let inits = Seq.push (assign_var v e) inits in
-       seq {vars;inits;desc=Stm} @@ k (exp (Var v) typ)
+let if1  : bool exp -> unit stm -> unit stm =
+  fun (_,ce) (_,st) -> stmt @@ I.If(ce,st,None)
 
-(* Reference cells *)
-let newref  : 'a cde -> ('a ref cde -> 'w cde) -> 'w cde = function 
-  | {vars;inits;desc=Exp(typ,(Const _ as exp))} ->
-    fun k ->
-      let v = genname "v" in
-      let def = ((v,cbtype typ),Init_single exp) in
-      let vars = Seq.push def vars in
-      seq {vars;inits;desc=Stm} @@ k (of_desc (Vref (typ,v)))
-  | {vars;inits;desc=Exp(typ,exp)} ->
-    fun k ->
-      let v = genname "v" in
-      let def = ((v,cbtype typ),Init_none) in
-      let vars  = Seq.push def vars in
-      let inits = Seq.push (assign_var v exp) inits in
-      seq {vars;inits;desc=Stm} @@ k (of_desc (Vref (typ,v)))
-  | _ -> failwith "newref are permitted on base types only"
+let while_ : bool exp -> unit stm -> unit stm = fun (_,ce) (_,body) ->
+    stmt @@ I.While([ce],body)
 
-(* Uninitialized cell *)
-let newuref : type a w. a cde -> (a ref cde -> w cde) -> w cde = function
-  | {desc=Exp(typ,_)} ->
-      fun k -> 
-        let v = genname "v" in
-        let def = ((v,cbtype typ),Init_none) in
-        let r = k (of_desc (Vref (typ,v))) in
-        {r with vars = Seq.push_first def r.vars}
-  | {desc=Varr (t,a,e)} -> 
-      failwith ("newuref are permitted on base types only: varr:" ^ a) 
-  | _ -> failwith "newuref are permitted on base types only"
+let for_ : int exp ->           (* exact lower bound *)
+           upe:int exp ->       (* least upper bound, *exclusive* *)
+           ?guard:bool exp ->   (* possibly a guard, terminate when false *)
+           ?step:int exp ->     (* step *)
+           (int exp -> unit stm) -> unit stm =
+  fun (_,lwb) ~upe ?guard ?(step=int 1) body ->
+  let open I in
+  let id = genvarname "i" in
+  let (_, b) = body (tint,LocalVar id) in
+  stmt I.(For {id; ty=TNum tint_ntyp; lwb; upe=snd upe; step=snd step; 
+               guard=Option.map snd guard; body=b})
 
-let dref : 'a ref cde -> 'a cde = function 
-   | {vars;inits;desc=Vref(typ,v)} -> {vars;inits;desc=Exp(typ,Var v)}
-   | _ -> assert false
 
-let incr : int ref cde -> unit cde =  function
-   | {vars;inits;desc=Vref(typ,v)} ->
-      let inits = Seq.push (UNMOD(POSINCR,Var v)) inits in
-      {vars;inits;desc=Stm}
-   | _ -> assert false
 
-let decr : int ref cde -> unit cde = function
-   | {vars;inits;desc=Vref(typ,v)} ->
-     let inits = Seq.push (UNMOD(POSDECR,Var v)) inits in
-     {vars;inits;desc=Stm}
-   | _ -> assert false
+(* Mutable Variables *)
+type 'a mut = 'a tbase * I.varname    (* The name of the mutable variable *)
 
-let (:=) : 'a ref cde -> 'a cde -> unit cde = fun x y ->
-  merge x y @@ fun[@warning "-8"] vars inits (Vref(typ,v)) desc ->
-    match desc with
-    | Exp (_,exp) ->
-        let inits = Seq.push (assign_var v exp) inits in
-        {vars;inits;desc=Stm}
-    | _ -> assert false
+let dref : 'a mut -> 'a exp = fun (ty,v) -> 
+   exp_app ty (I.OP.DEREF ty.ityp) [I.MutVar v]
 
-(* Expressions *)
+let (:=) :  'a mut -> 'a exp -> unit stm = fun (ty,v) (_,e) -> 
+  stmt_app (I.OP.ASSIGN ty.ityp) [MutVar v;e]
 
-(* Make sure all side-effecting operations are combined into the expression
-   itself, so the initializers are empty. The bindings, if present, should
-   only contain constant initializers.
-   Only proper expressions can be used in control constructs such as
-   conditional statements, conditions in while-loop, etc. cases.
-   Such expressions can be safely executed zero or more than one time.
+let incr    : int mut -> unit stm = fun (ty,v) -> 
+  stmt_app (I.OP.INCR tint_ntyp) [MutVar v]
+
+let decr    : int mut -> unit stm = fun (ty,v) -> 
+  stmt_app (I.OP.DECR tint_ntyp) [MutVar v]
+
+let newref  : 'a exp -> ('a mut -> 'w stm) -> 'w stm = fun (ty,e) body ->
+   let id = I.genvarname "x" in
+   let (tb,b) = body (ty,id) in
+   (tb,
+     (* If the body is empty, there is no need to bind anything.
+        Still, the initializer must be executed.
+     *)
+   match b with
+     | I.Unit -> I.of_exp e
+     | I.Block (bindings,b) ->
+         I.(Block (Sq.(one (Some {id;ty=ty.ityp;mut=Mut;attrs=[]},e) @
+                   bindings), 
+                   b))
+    )
+
+
+(* Create an *uninitialized* reference cell. The first argument is
+   not an initial value: it is just a hint to get the type.
+   Therefore, the first argument may be unusable as the value.
+   A backend may still use some other value of the same type as
+   the initial value.
+   Actually, according to C standard, uninitialized numeric variables
+   are actually initialized with zero.
  *)
-let proper_exp : type a. a cde -> a cde = function
-  | ({inits} as e) when Seq.is_empty inits -> e
-  | {vars;inits;desc=Exp(t,exp)} ->
-      let desc = Exp(t,Comma (Seq.to_list inits,exp)) in
-      let inits = Seq.empty in
-      {vars;inits;desc}
-  | _ -> assert false
+let newuref : 'a exp -> ('a mut -> 'w stm) -> 'w stm = fun (ty,_) body ->
+   let id = I.genvarname "x" in
+   let (tb,b) = body (ty,id) in
+   (tb,
+   match b with
+     | I.Unit -> I.Unit
+     | I.Block (bindings,b) ->
+         I.(Block (Sq.(one (Some {id;ty=ty.ityp;mut=Mut;attrs=[]},ty.zero) @
+                   bindings), 
+                   b))
+    )
 
-let unary_op : type a b. a tbase * unary_operator * b tbase -> a cde -> b cde =
-  fun (_,op,t) e -> match e with
-  | {desc=Exp(_,exp)} -> {e with desc=Exp(t,Unary(op,exp))}
-  | _ -> assert false
-
-let binary_op : type a b. a tbase * binary_operator * b tbase -> 
-  a cde -> a cde -> b cde = fun (_,op,t) x y ->
-  merge x y @@ fun vars inits d1 d2 ->
-    match (d1,d2) with
-    | (Exp (_,e1), Exp (_,e2)) -> 
-        {vars;inits;desc=Exp(t,Binary(op,e1,e2))}
-    | _ -> assert false
- 
-(* Booleans *)
-let bool : bool -> bool cde = fun b -> 
-  (* XXX Should it be TRUE and FALSE *)
-  exp (Const (Const_num (if b then "1" else "0"))) tbool
-
-let not : bool cde -> bool cde = unary_op (tbool,NOT,tbool)
-
-let (&&) : bool cde -> bool cde -> bool cde = fun x y ->
-  binary_op (tbool,AND,tbool) x (proper_exp y)
-let (||) : bool cde -> bool cde -> bool cde = fun x y ->
-  binary_op (tbool,OR,tbool) x (proper_exp y)
-
-
-(* Integers *)
-let int : int -> int cde = fun x ->
-  exp (Const (Const_num (string_of_int x))) tint
-
-let ( + ) : int cde -> int cde -> int cde  = binary_op (tint,ADD,tint)
-let ( - ) : int cde -> int cde -> int cde  = binary_op (tint,SUB,tint)
-let ( * ) : int cde -> int cde -> int cde  = binary_op (tint,MUL,tint)
-let ( / ) : int cde -> int cde -> int cde  = binary_op (tint,DIV,tint)
-let (mod) : int cde -> int cde -> int cde  = binary_op (tint,MOD,tint)
-let ( ~-) : int cde -> int cde  = unary_op (tint,MINUS,tint)
-let logand : int cde -> int cde -> int cde = 
-  binary_op (tint,BAND,tint)
-
-let ( =)  : int cde -> int cde -> bool cde = binary_op (tint,EQ,tbool)
-let ( <)  : int cde -> int cde -> bool cde = binary_op (tint,LT,tbool)
-let ( >)  : int cde -> int cde -> bool cde = binary_op (tint,GT,tbool)
-let (<=)  : int cde -> int cde -> bool cde = binary_op (tint,LE,tbool)
-let (>=)  : int cde -> int cde -> bool cde = binary_op (tint,GE,tbool)
-
-let imin : int cde -> int cde -> int cde = fun c1 c2 ->
-  merge c1 c2 @@ fun vars inits (Exp(_,e1)) (Exp (_,e2)) ->
-    {vars;inits;desc=Exp(tint,Cond(Binary(LT,e1,e2),e1,e2))}
-let imax : int cde -> int cde -> int cde = fun c1 c2 ->
-  merge c1 c2 @@ fun vars inits (Exp(_,e1)) (Exp (_,e2)) ->
-    {vars;inits;desc=Exp(tint,Cond(Binary(GT,e1,e2),e1,e2))}
-
-(* Floating points *)
-(* We create hexadecimal literals to avoid loss of precision due
-   to conversions
-*)
-let float : float -> float cde = fun x ->
-  let str = if Float.is_integer x then string_of_float x else
-            Printf.sprintf "%h" x
-  in
-  exp (Const (Const_num str)) tfloat
-
-let ( +.) : float cde -> float cde -> float cde  = binary_op (tfloat,ADD,tfloat)
-let ( -.) : float cde -> float cde -> float cde  = binary_op (tfloat,SUB,tfloat)
-let ( *.) : float cde -> float cde -> float cde  = binary_op (tfloat,MUL,tfloat)
-let ( /.) : float cde -> float cde -> float cde  = binary_op (tfloat,DIV,tfloat)
-
-let atan : float cde -> float cde = 
-  function {desc=Exp(_,exp)} as e -> 
-    {e with desc=Exp(tfloat,Call (Var "atan",[exp]))}
-
-let truncate : float cde -> int cde = 
-  function {desc=Exp(_,exp)} as e -> 
-    {e with desc=Exp(tint,Cast(cbtype tint,exp))}
-
-let float_of_int : int cde -> float cde =
-  function {desc=Exp(_,exp)} as e -> 
-    {e with desc=Exp(tfloat,Cast(cbtype tfloat,exp))}
 
 (* Arrays *)
-let array_len : 'a array cde -> int cde = function
-   | {vars;inits;desc=Varr(_,_,len)} -> {vars;inits;desc=Exp(tint,len)}
-   | _ -> assert false
 
-let array_set : 'a array cde -> int cde -> 'a cde -> unit cde = fun arr i v ->
-  merge3 arr i v @@ fun vars inits arr i v ->
-    match (arr,i,v) with
-    | (Varr(_,ar,_), Exp(_,i), Exp (_,v)) ->
-        let inits = Seq.push (assign (Index(Var ar,i)) v) inits in
-        {vars;inits;desc=Stm}
-    | _ -> assert false
+type 'a arr = 'a tbase * int exp * (* The length exp, immut variable or const *)
+               I.varname           (* The name of the array variable *)
 
-let array_get' : 'a array cde -> int cde -> 'a cde = fun arr i -> 
-   merge arr i @@ fun[@warning "-8"] vars inits (Varr (t,ar,_)) (Exp (_,i)) ->
-   {vars;inits;desc=Exp(t,Index(Var ar,i))}
+let array_get' : 'a arr -> int exp -> 'a exp =
+  fun (ty,_,a) (_,i) -> 
+    exp_app ty (I.OP.Array1_get ty.ityp) [LocalVar a;i]
 
-(* It makes sense to combine it with letl *)
-(* XXX Optimization: if the index expression is a constant, or if it
-   is a reference to a variable that is not subject to :=
-   (wasn't created by newref), then don't make a let-binding
+let array_len  : 'a arr -> int exp = fun (_,e,a) -> e
+
+let array_set : 'a arr -> int exp -> 'a exp -> unit stm =
+  fun (_,_,a) (_,i) (ty,v) ->
+    stmt_app (I.OP.Array1_set ty.ityp) [LocalVar a; i; v]
+
+(* Could be defined as a macro in C *)
+let array_incr : 'a arr -> int exp -> 'a exp -> unit stm =
+  fun (_,_,a) (_,i) (_,v) ->
+    stmt_app (I.OP.name "array1_incr") [LocalVar a; i; v]
+
+let array_get  : 'a arr -> int exp -> ('a exp -> 'w stm) -> 'w stm =
+  fun arr i k -> letl (array_get' arr i) k
+
+(* initialized non-empty array, immediately bound to a variable.
+   Must be of a base type
  *)
-let array_get : 'a array cde -> int cde -> ('a cde -> 'w cde) -> 'w cde
-    = fun arr i k -> 
-      merge arr i @@ 
-      fun[@warning "-8"] vars inits (Varr (t,ar,_)) (Exp (_,i)) ->
-        let iexp = {vars;inits;desc=Exp(t,Index(Var ar,i))} in
-        letl iexp k
+let new_array  : 'a tbase -> 'a exp array -> ('a arr -> 'w stm) -> 'w stm =
+   fun ty arrs body -> 
+   let n = Array.length arrs in
+   let len = int n in
+   let id = I.genvarname "a" in
+   let (tb,b) = body (ty,len,id) in
+   let binding = I.(Some {id;ty=TLenArray1 (n,ty.ityp);mut=Cnst;attrs=[]},
+                    Array (Array.to_list arrs |> List.map snd))
+   in
+   (tb,
+   match b with
+     | I.Unit -> I.Unit
+     | I.Block (bindings,b) ->
+         I.(Block (Sq.(one binding @ bindings), b))
+    )
+
+(* The same but the elements are statically known, and the array
+   should be made static
+*)
+let new_static_array  : 'a tbase -> ('b -> 'a exp) -> 'b array -> 
+  ('a arr -> 'w stm) -> 'w stm =
+   fun ty cnv arrs body -> 
+   let n = Array.length arrs in
+   let len = int n in
+   let id = I.genvarname "a" in
+   let (tb,b) = body (ty,len,id) in
+   let binding = I.(Some {id;ty=TLenArray1 (n,ty.ityp);mut=Cnst;
+                          attrs=[A_static]},
+                    Array (Array.map (cnv >> snd) arrs |> Array.to_list))
+   in
+   (tb,
+   match b with
+     | I.Unit -> I.Unit
+     | I.Block (bindings,b) ->
+         I.(Block (Sq.(one binding @ bindings), b))
+    )
+
 
 (* new uninitialized array, of the base type
 *)
+let new_uarray : 'a tbase -> int -> ('a arr -> 'w stm) -> 'w stm = 
+   fun ty n body -> 
+   let len = int n in
+   let id = I.genvarname "a" in
+   let (tb,b) = body (ty,len,id) in
+   let binding = I.(Some {id;ty=TLenArray1 (n,ty.ityp);mut=Cnst;attrs=[]},
+                    Array [])
+   in
+   (tb,
+   match b with
+     | I.Unit -> I.Unit
+     | I.Block (bindings,b) ->
+         I.(Block (Sq.(one binding @ bindings), b))
+    )
+
+(*
 let new_uarray : 'a tbase -> int -> ('a array cde -> 'w cde) -> 'w cde =
   fun t n k -> 
     let aname = genname "a" in
     let def = ((aname,{specs=[];typ=Tarray (n,cbtype t)}),Init_none) in
     let r = k (of_desc @@ Varr(t,aname,Const(Const_num (string_of_int n)))) in
     {r with vars = Seq.push_first def r.vars}
-
-(* initialized array, immediately bound to a variable
-   Must be of a base type
 *)
-let new_array  : 'a tbase -> 'a cde array -> ('a array cde -> 'w cde) -> 'w cde
-  = fun t iarr k ->
-    let n = Array.length iarr in
-    assert Stdlib.(n>0);
-    let (vars,inits) =
-      Array.fold_right (fun {vars;inits} (accv,acci)  ->
-        (Seq.merge vars accv, Seq.merge inits acci)) iarr 
-        (Seq.empty,Seq.empty) in
-    let arr_inits = 
-      Array.map (function {desc=Exp(_,exp)} -> exp | _ -> assert false) iarr |>
-      Array.to_list in
-    let aname = genname "a" in
-    let def = ((aname,{specs=[];typ=Tarray (n,cbtype t)}),
-                Init_many arr_inits) in
-    let vars = Seq.push def vars in
-    seq {vars;inits;desc=Stm} @@
-       k (of_desc @@ Varr(t,aname,Const(Const_num (string_of_int n))))
 
-(* Simple i/o, useful for debugging. Newline at the end *)
-let print_int   : int cde   -> unit cde = fun {vars;inits;desc=Exp(_,exp)} ->
-  let inits = 
-    Seq.push (CALL (Var "printf",[Const (Const_string "%ld\n");
-                                  Cast({typ=Tlong;specs=[]},exp)])) inits in
-  {vars;inits;desc=Stm}
-let print_float   : float cde   -> unit cde =fun {vars;inits;desc=Exp(_,exp)} ->
-  let inits = 
-    Seq.push (CALL (Var "printf",[Const (Const_string "%g\n");exp])) inits in
-  {vars;inits;desc=Stm}
-
-(* Control operators *)
-(* Be sure to use proper expressions, if they can be executed zero or
-   more than one times
+(* Inquiries. They are best effort *)
+(* Is value statically known: known at code-generation time *)
+let is_static : 'a exp -> bool = function
+  | (_,I.Const _) -> true
+  | _             -> false
+(* Is value dependent on something introduced by the library itself?
+   For example, dependent on letl identifier, etc.
+   It may always return true.
  *)
-
-let to_block' : unit cde -> block = fun {vars;inits} ->
-  {blabels=[]; bdefs=Seq.to_list vars; bstmts=Seq.to_list inits}
-
-let to_block : unit cde -> statement = fun c -> BLOCK (to_block' c)
-
-(* Perhaps separate if_ expression from if-statement *)
-(* XXX Cannot use for-statements within bt & bf
-** when it becomes a C conditional operator (_?_:_).
-** Thus, the C backend definitely has a little bit
-** regulation on the grammar.
-*)
-let cond : type a. bool cde -> a cde -> a cde -> a cde = 
- fun ({vars;inits;desc=Exp(_,ecnd)} as cnd) bt bf ->
-  match (bt,bf) with
-  | ({desc=Stm},{desc=Stm}) ->
-      let inits = Seq.push (IF(ecnd,to_block bt,to_block bf)) inits in
-      {vars;inits;desc=Stm}
-  | (bt,bf) -> merge3 cnd (proper_exp bt) (proper_exp bf) @@
-      fun vars inits (Exp(_,ecnd)) bt bf ->
-      match (bt,bf) with
-      | (Exp(t,et),Exp(_,ef)) ->
-          {vars;inits;desc=Exp(t,Cond(ecnd,et,ef))}
-      | _ -> assert false
-
-let if_  : bool cde -> unit cde -> unit cde -> unit cde = cond
-let if1  : bool cde -> unit cde -> unit cde = 
- fun {vars;inits;desc=Exp(_,ecnd)} bt ->
-   let inits = Seq.push (IF(ecnd,to_block bt,NOP)) inits in
-   {vars;inits;desc=Stm}
-
-let for_ : int cde ->           (* exact lower bound *)
-           int cde ->           (* exact upper bound *)
-           ?guard:bool cde ->   (* possibly a guard, terminate when false *)
-           ?step:int cde ->     (* step *)
-           (int cde -> unit cde) -> unit cde = 
-  fun lwb ({desc=Exp(_,eupb)} as upb) ?guard ?(step=int 1) body ->
-  let i = genname "i" in
-  let idef = ((i,cbtype tint),Init_none) in
-  let guardi = Binary (LE,Var i,eupb) in
-  let guard = match guard with
-              | None   -> exp guardi tbool
-              | Some e -> exp guardi tbool && (proper_exp e) in
-  merge4 lwb upb guard step @@ 
-  fun vars inits (Exp (_,lwb)) _ (Exp (_,guard)) (Exp (_,step)) ->
-    let vars = Seq.push idef vars in
-    let for_stm = FOR(assign_var i lwb,
-                      guard,
-                      Stdlib.(if step = Const (Const_num "1") 
-                       then UNMOD (POSINCR,Var i)
-                       else BIMOD (ADD_ASSIGN,Var i,step)), 
-                      to_block (body (exp (Var i) tint))) in
-    let inits = Seq.push for_stm inits in
-    {vars;inits;desc=Stm}
-
-let while_ : bool cde -> unit cde -> unit cde = fun cnd body ->
-  match proper_exp cnd with
-    {vars;inits;desc=Exp(_,goon)} ->
-      let inits = Seq.push (WHILE(goon,to_block body)) inits in
-      {vars;inits;desc=Stm}
+let is_fully_dynamic : 'a exp -> bool = function
+  | (_,I.Const _)     -> false
+  | (_,I.GlobalVar _) -> false
+  | _                 -> true
 
 
 (* Advanced control construction *)
@@ -541,70 +391,286 @@ let cloop :
         {vars;inits;desc=Stm}
 *)
 let cloop :
-    ('a -> unit cde) ->        (* cloop's continuation *)
-    bool cde option ->         (* possibly a guard *)
-    (('a -> unit cde) -> unit cde) ->   (* body, in CPS, which may exit
-                                           without calling its continuation
+    ('a -> unit stm) ->        (* cloop's continuation *)
+    bool exp option ->         (* possibly a guard. 
+                                  It is true at the beginning *)
+    (('a -> unit stm) -> unit stm) ->   (* body, in CPS, which may exit
+                                           without calling its continuation,
+                                           in which case the loop is re-executed
+                                           provided the guard is still true.
                                          *)
-    unit cde = 
-    fun k bp body ->
+   unit stm = 
+   fun k bp body ->
       newref (bool true) @@ fun again ->
-      let {vars;inits;desc=Exp(_,bp)} = 
+      let test = 
         match bp with
         | None -> dref again
         | Some bp -> dref again && bp
       in
-      let inits =
-        Seq.push (DOWHILE (bp,
-                           to_block @@ body (fun x -> seq (k x) 
-                                                     (again := bool false)))) @@
-        inits in
-      {vars;inits;desc=Stm}
+   (* XXX Use DO WHILE? *)
+      while_ test @@ 
+      body (fun x -> seq (k x) (again := bool false))
 
-(* Inquiries. They are best effort *)
-(* Is value statically known: known at code-generation time *)
-let is_static : 'a cde -> bool = fun _ -> false
-(* Is value dependent on something introduced by the library itself?
-   For example, dependent on letl identifier, etc.
-   It may always return true.
- *)
-let is_fully_dynamic : 'a cde -> bool = fun x -> Stdlib.not (is_static x)
+(* foreign function type : now concrete (not private) *)
+type 'sg ff = {invoke : 'sg}
+
+(* Numbers of various sorts *)
+module type num = sig
+  type t
+  type num_t
+  val tbase  : t tbase
+  val to_t   : num_t -> t               (* for the sake of Partial Eval *)
+  val of_t   : t -> num_t
+  val lit    : num_t -> t exp
+  val neg    : t exp -> t exp
+  val ( +. ) : t exp -> t exp -> t exp
+  val ( -. ) : t exp -> t exp -> t exp
+  val ( *. ) : t exp -> t exp -> t exp
+  val ( /. ) : t exp -> t exp -> t exp
+  val print  : t exp -> unit stm
+end
+
+(* Floating point numbers of various sorts *)
+module type flonum = sig
+  include num
+  val rem  : t exp -> t exp -> t exp
+  val truncate : t exp -> int exp
+  val of_int   : int exp -> t exp
+  val sin  : (t exp -> t exp) ff
+  val cos  : (t exp -> t exp) ff
+  val atan : (t exp -> t exp) ff        (* more can be added *)
+end
+
+(* Complex numbers *)
+module type cmplxnum = sig
+  include num
+  type float_t
+  val conj     : t exp -> t exp
+  val norm2    : t exp -> float_t exp   (* Euclidian norm, squared *)
+  val arg      : t exp -> float_t exp   (* -pi to pi *)
+  val real     : t exp -> float_t exp
+  val imag     : t exp -> float_t exp
+  val complex  : float_t exp -> float_t exp -> t exp
+  val scale    : float_t exp -> t exp -> t exp
+end
 
 
-(* Top-level functions *)
+module F64 = struct
+  type t = float
+  type num_t = float
+  type 'a tbase_desc +=
+    | TF64   : t tbase_desc
+  let to_t = Fun.id
+  let of_t = Fun.id
 
-let nullary_fun' : type a. ?name:string -> a cde -> declaration = 
-  fun ?(name="fn") c ->
-  let (ctyp,block) = match c with
-  | {desc=Stm} -> ({specs=[];typ=Tvoid},to_block' c)
-  | {vars;inits;desc=Exp(t,e)} -> 
-      (cbtype t, to_block' @@
-       {vars; inits=Seq.push (RETURN e) inits; desc=Stm})
-  | _ -> assert false
-  in 
-  FUNDEF(ctyp,name,[],block)
+  let tbase : t tbase =
+   {desc=TF64; ityp=I.TNum F64; 
+    zero=I.(Const (Const_num (F64,"0.")));
+    printf_fn = (fun e -> make_printf "%.17g\n" [e]);
+    deser=float_of_string;}
 
-let nullary_fun : ?name:string -> Format.formatter -> 'a cde -> unit =
-  fun ?name ppf c -> nullary_fun' ?name c |> C_pp.pr_decl ppf 
+  let print    : t exp -> unit stm = fun (_,e) -> (TVoid, tbase.printf_fn e)
 
-(* Run a procedure and capture its standard output, which is
+  (* see longer comments in trx.ml: float_constant *)
+  let lit : num_t -> t exp = fun x -> 
+    let s = 
+      if Float.is_integer x then string_of_float x else
+      Printf.sprintf "%.17g" x
+    in
+    exp tbase I.(Const (Const_num (F64, s)))
+
+  let neg   = unary_op (tbase,I.OP.NEG F64,tbase)
+
+  let ( +.) = binary_op (tbase,tbase,I.OP.ADD F64,tbase)
+  let ( -.) = binary_op (tbase,tbase,I.OP.SUB F64,tbase)
+  let ( *.) = binary_op (tbase,tbase,I.OP.MUL F64,tbase)
+  let ( /.) = binary_op (tbase,tbase,I.OP.DIV F64,tbase)
+  let rem   = binary_op (tbase,tbase,I.OP.MOD F64,tbase)
+
+  let truncate : t exp -> int exp = fun (_,e) -> 
+    exp_app tint I.(OP.CAST {from=F64; onto=tint_ntyp}) [e]
+
+  let of_int   : int exp -> t exp = fun (_,e) -> 
+    exp_app tbase I.(OP.CAST {onto=F64; from=tint_ntyp}) [e]
+
+
+  let sin : (t exp -> t exp) ff = 
+    {invoke = unary_op (tbase,I.OP.name "sin",tbase)}
+  let cos : (t exp -> t exp) ff = 
+    {invoke = unary_op (tbase,I.OP.name "cos",tbase)}
+  let atan : (t exp -> t exp) ff = 
+    {invoke = unary_op (tbase,I.OP.name "atan",tbase)}
+end
+
+module F32 = struct
+  type t = float
+  type num_t = float
+  type 'a tbase_desc +=
+    | TF32   : t tbase_desc
+  let to_t = Fun.id
+  let of_t = Fun.id
+
+  let tbase : t tbase =
+   {desc=TF32; ityp=I.TNum F32; 
+    zero=I.(Const (Const_num (F32,"0.")));
+    printf_fn = (fun e -> make_printf "%.8g\n" [e]);
+    deser=float_of_string;}
+
+  (* see longer comments in trx.ml: float_constant *)
+  let lit : num_t -> t exp = fun x -> 
+    let s = 
+      if Float.is_integer x then string_of_float x else
+      Printf.sprintf "%.8g" x
+    in
+    exp tbase I.(Const (Const_num (F32, s)))
+
+  let neg   = unary_op (tbase,I.OP.NEG F32,tbase)
+
+  let ( +.) = binary_op (tbase,tbase,I.OP.ADD F32,tbase)
+  let ( -.) = binary_op (tbase,tbase,I.OP.SUB F32,tbase)
+  let ( *.) = binary_op (tbase,tbase,I.OP.MUL F32,tbase)
+  let ( /.) = binary_op (tbase,tbase,I.OP.DIV F32,tbase)
+  let rem   = binary_op (tbase,tbase,I.OP.MOD F32,tbase)
+
+  let truncate : t exp -> int exp = fun (_,e) -> 
+    exp_app tint I.(OP.CAST {from=F32; onto=tint_ntyp}) [e]
+
+  let of_int   : int exp -> t exp = fun (_,e) -> 
+    exp_app tbase I.(OP.CAST {onto=F32; from=tint_ntyp}) [e]
+
+  let print    : t exp -> unit stm = fun (_,e) -> (TVoid, tbase.printf_fn e)
+
+  let sin : (t exp -> t exp) ff = 
+    {invoke = unary_op (tbase,I.OP.name "sinf",tbase)}
+  let cos : (t exp -> t exp) ff = 
+    {invoke = unary_op (tbase,I.OP.name "cosf",tbase)}
+  let atan : (t exp -> t exp) ff = 
+    {invoke = unary_op (tbase,I.OP.name "atanf",tbase)}
+end
+
+(* https://en.cppreference.com/w/c/numeric/complex *)
+
+module C32 = struct
+  type t = Complex.t
+  type num_t = Complex.t
+  type float_t = F32.t
+  type 'a tbase_desc +=
+    | TC32   : t tbase_desc
+  let to_t = Fun.id
+  let of_t = Fun.id
+
+  let tbase : t tbase =
+   {desc=TC32; ityp=I.TNum C32; 
+    zero=I.(Const (Const_num (C32,"CMPLXF(0,0)")));
+    printf_fn = I.(fun e -> make_printf "%.1f%+.1f*I\n" [
+          FunCall (I.OP.name "crealf", [e]);
+          FunCall (I.OP.name "cimagf", [e]);]);
+    deser=fun s -> 
+      Scanf.sscanf s "%f%c%f*I"
+            Stdlib.(fun x s y -> 
+               Complex.{re=x;im=if s='+' then y else Float.neg y});}
+
+  (* see longer comments in trx.ml: float_constant *)
+  let lit : num_t -> t exp = fun x -> 
+    let s x = 
+      if Float.is_integer x then string_of_float x else
+      Printf.sprintf "%.8g" x
+    in
+    exp tbase I.(Const (Const_num 
+                 (C32, Printf.sprintf "CMPLXF(%s,%s)" (s x.re) (s x.im))))
+
+  let neg   = unary_op (tbase,I.OP.NEG C32,tbase)
+
+  let ( +.) = binary_op (tbase,tbase,I.OP.ADD C32,tbase)
+  let ( -.) = binary_op (tbase,tbase,I.OP.SUB C32,tbase)
+  let ( *.) = binary_op (tbase,tbase,I.OP.MUL C32,tbase)
+  let ( /.) = binary_op (tbase,tbase,I.OP.DIV C32,tbase)
+
+  let print    : t exp -> unit stm = fun (_,e) -> (TVoid, tbase.printf_fn e)
+
+  let conj     : t exp -> t exp =  unary_op (tbase,I.OP.name "conjf",tbase)
+  let arg      : t exp -> float_t exp = 
+    unary_op (tbase,I.OP.name "cargf",F32.tbase)
+  let real     : t exp -> float_t exp =
+    unary_op (tbase,I.OP.name "crealf",F32.tbase)
+  let imag     : t exp -> float_t exp =
+    unary_op (tbase,I.OP.name "cimagf",F32.tbase)
+  let norm2    : t exp -> float_t exp = fun e -> real (e *. conj e)
+  let complex  : float_t exp -> float_t exp -> t exp = fun (_,x) (_,y) ->
+    exp tbase I.(FunCall (I.OP.name "CMPLXF",[x;y]))
+  let scale    : float_t exp -> t exp -> t exp = fun (_,s) (_,e) ->
+    exp tbase I.(FunCall (I.OP.MUL C32, [s;e]))
+end
+
+
+(* Procedures *)
+type 'a proc_t = I.proc_t
+
+let nullary_proc : type a. a stm -> a proc_t = fun (ty,b) -> 
+  let ityp = match ty with
+   | TVoid -> I.TVoid
+   | TBase ty -> ty.ityp 
+  in
+  ([],ityp,b)
+
+let arg_base ?(name="n") : 
+    'a tbase -> ('a exp -> 'b proc_t) -> ('a -> 'b) proc_t =
+  fun ty body ->
+    let n = I.genvarname name in
+    let (args,ct,block) = body (ty,I.LocalVar n) in
+    ((n,ty.ityp)::args,ct,block)
+
+
+let arg_array ?(name="a") : ?mutble:bool -> 
+  int exp ->                            (* length *)
+  'a tbase -> ('a arr -> 'b proc_t) -> ('a -> 'b) proc_t =
+  fun ?(mutble=false) len ty body ->
+    let a = I.genvarname name in
+    let (args,ct,block) = body (ty,len,a) in
+    ((a,I.TArray1 ty.ityp)::args,ct,block)
+
+
+(* Writing the code *)
+
+let pp_prelude : Format.formatter -> unit = fun ppf -> 
+  Format.pp_print_string ppf
+    "#include <stdio.h>\n#include <stdlib.h>\n
+     #include <math.h>\n#include <stdbool.h>\n
+     #include <complex.h>\n"
+
+(*
+   main has the return type of int, always.
+   The body of main does not have to have return statement.
+*)
+let pp_main : Format.formatter -> unit stm -> unit = fun ppf s ->
+  let (_,b) = seq s (ret (int 0)) in
+  OffshoringIR_pp.pp_to_c ~out:ppf ~name:"main" ([],I.TNum I32,b)
+
+let pp_proc : ?name:string -> Format.formatter -> 'a proc_t -> unit =
+  fun ?(name="fn") ppf proc -> 
+  OffshoringIR_pp.pp_to_c ~out:ppf ~name proc
+
+(* For debugging only *)
+let print_code ?name x =
+  nullary_proc x |> pp_proc ?name Format.std_formatter;
+  Format.fprintf Format.std_formatter "@." 
+
+(* Debugging support: running the code *)
+
+(* Run a block and capture its standard output, which is
    returned as an input channel (which needs to be closed).
    Typically that channel is open on a temp file, which is automatically
    removed when the channel is closed.
    We use Scanf.Scanning.in_channel for uniformity with Trx module:
    such channels can be opened on strings, buffers, etc.
  *)
-let run_capture_output : unit cde -> Scanf.Scanning.in_channel = fun c ->
+
+let build_capture_output : 
+  (Format.formatter -> unit) -> Scanf.Scanning.in_channel = fun builder ->
   let (cdename,cdechan) = Filename.open_temp_file ~temp_dir:"/tmp" "cde" ".c" in
-  Format.fprintf (Format.formatter_of_out_channel cdechan)
-    "#include <stdio.h>\n#include <stdlib.h>\n
-     #include <math.h>\n#include <stdbool.h>\n
-     %a\n@."
-     C_pp.pr_decl
-     (FUNDEF({specs=[];typ=Tint},
-             "main",[],       (* main must have the return type just int *)
-      to_block' 
-       {c with inits=Seq.push (RETURN (Const (Const_num "0"))) c.inits}));
+  let ppf = Format.formatter_of_out_channel cdechan in
+  builder ppf;
+  Format.pp_print_flush ppf ();
   close_out cdechan;
   let outname = Filename.temp_file ~temp_dir:"/tmp" "out" ".txt" in
   let rc = Printf.kprintf Sys.command 
@@ -617,164 +683,19 @@ let run_capture_output : unit cde -> Scanf.Scanning.in_channel = fun c ->
   end
   else failwith "compilation errors; examine the files"
 
-let run_output_to_command : unit cde -> string -> unit = fun code comanndname ->
-  (* Print the code to a temporary file *)
-  let (cdename,cdechan) = Filename.open_temp_file ~temp_dir:"/tmp" "cde" ".c" in
-  Format.fprintf (Format.formatter_of_out_channel cdechan)
-    "#include <stdio.h>\n#include <stdlib.h>\n
-    #include <math.h>\n#include <stdbool.h>\n
-    %a\n@."
-    C_pp.pr_decl
-    (FUNDEF({specs=[];typ=Tint},
-            "main",[],       (* main must have the return type just int *)
-      to_block' 
-      {code with inits=Seq.push (RETURN (Const (Const_num "0"))) code.inits}));
-  close_out cdechan;
-  (* Invoke the code, then redirect its output to the command *)
-  let rc = Printf.kprintf Sys.command 
-      "cd /tmp && gcc -Wall -lm %s && ./a.out | (%s > /dev/null 2>&1)" cdename comanndname in
-  if Stdlib.(rc = 0) then begin
-    (* For debug: `print_endline cdename` *)
-    Sys.remove cdename
-  end
-  else failwith "compilation errors; examine the files"
-  
-(* Useful mostly for debugging. It adds printf and 
-   returns the printf-completed statement and the deserializer.
- *)
-let write_res : type a. a cde -> (unit cde * (string -> a)) = function
-  | {vars;inits;desc=Exp(t,exp)} ->
-      let (fmt,exp,(deser : string -> a)) = match t with
-      {printf_fmt;printf_cast;deser} -> (printf_fmt, printf_cast exp, deser)
-      in
-      let inits = 
-      Seq.push (CALL (Var "printf",[Const (Const_string fmt);exp])) inits in
-      ({vars;inits;desc=Stm}, deser)
-  | _ -> failwith "write_res: only base types"
-
+let run_capture_output : unit stm -> Scanf.Scanning.in_channel = fun s ->
+  build_capture_output (fun ppf -> pp_prelude ppf; pp_main ppf s)
+ 
 (* Only for base types *)
-let run : type a. a cde -> a = fun c ->
-  let (c,deser) = write_res c in
-  let cin = run_capture_output c in
-  let r = Scanf.bscanf cin "%s@\n" deser in Scanf.Scanning.close_in cin; r
+let run : type a. a stm -> a = function 
+  | (TBase ty,b) -> 
+      let cin = build_capture_output (fun ppf ->
+        pp_prelude ppf; 
+        OffshoringIR_pp.pp_to_c ~out:ppf ~name:"fn" ([],ty.ityp,b);
+        pp_main ppf (TVoid, ty.printf_fn (FunCall (I.OP.name "fn",[]))))
+      in
+      let r = Scanf.bscanf cin "%s@\n" ty.deser in 
+      Scanf.Scanning.close_in cin; r
+  | _ -> failwith "run: only base types"
 
-let one_array_fun' : type a b. ?name:string -> 
-  a tbase -> (a array cde -> b cde) -> declaration = 
-  fun ?(name="fn") tp bodyf ->
-  let a = genname "aa" in
-  let l = genname "al" in
-  let arr = of_desc @@ Varr (tp,a,Var l) in
-  let body = bodyf arr in
-  let (ctyp,block) = match body with
-  | {desc=Stm} -> ({specs=[];typ=Tvoid},to_block' body)
-  | {vars;inits;desc=Exp(t,e)} -> 
-      (cbtype t, to_block' @@
-       {vars; inits=Seq.push (RETURN e) inits; desc=Stm})
-  | _ -> assert false
-  in 
-  FUNDEF(ctyp,name,[(a,{specs=[S_const];typ=Tptr (cbtype tp)});
-                    (l,cbtype ~specs:[S_const] tint)],block)
-
-let one_array_fun : ?name:string -> Format.formatter -> 
-  'a tbase -> ('a array cde -> 'b cde) -> unit =
-  fun ?name ppf tp bodyf -> one_array_fun' ?name tp bodyf |> C_pp.pr_decl ppf 
-
-let two_array_fun' : type a b c. ?name:string -> 
-  a tbase * b tbase -> (a array cde * b array cde -> c cde) -> declaration = 
-  fun ?(name="fn") (tp1,tp2) bodyf ->
-  let a1 = genname "a1a" in
-  let l1 = genname "a1l" in
-  let arr1 = of_desc @@ Varr (tp1,a1,Var l1) in
-  let a2 = genname "a2a" in
-  let l2 = genname "a2l" in
-  let arr2 = of_desc @@ Varr (tp2,a2,Var l2) in
-  let body = bodyf (arr1,arr2) in
-  let (ctyp,block) = match body with
-  | {desc=Stm} -> ({specs=[];typ=Tvoid},to_block' body)
-  | {vars;inits;desc=Exp(t,e)} -> 
-      (cbtype t, to_block' @@
-       {vars; inits=Seq.push (RETURN e) inits; desc=Stm})
-  | _ -> assert false
-  in 
-  FUNDEF(ctyp,name,
-         [(a1,{specs=[S_const];typ=Tptr (cbtype tp1)});
-          (l1,cbtype ~specs:[S_const] tint);
-          (a2,{specs=[S_const];typ=Tptr (cbtype tp2)});
-          (l2,cbtype ~specs:[S_const] tint);
-         ],block)
-
-let two_array_fun : ?name:string -> Format.formatter -> 
-  'a tbase * 'b tbase -> ('a array cde * 'b array cde -> 'c cde) -> unit =
-  fun ?name ppf tps bodyf -> two_array_fun' ?name tps bodyf |> C_pp.pr_decl ppf 
-
-(* More general function/procedure generation *)
-(* Currently, when the function takes an array there must be an earlier
-   argument of type int that tells the length of the array.
-   What if we want to generate a function where the array length is in
-   a later argument? Currently, it is not supported. If needed,
-   we need to define a special type 'a pre_array for just array
-   name argument, and a special function
-   assemble_array : 'a pre_array -> int cde -> 'a array cde
-   that associates the pre-array with the array length
- *)
-
-(* used internally while building the function declaration *)
-type 'a fun_decl = ctype * typedname list * block
-
-let gen_fun : type a. a cde -> a fun_decl = function
-  | ({desc=Stm} as body) -> ({specs=[];typ=Tvoid},[],to_block' body)
-  | {vars;inits;desc=Exp(t,e)} -> 
-      (cbtype t, [], to_block' @@
-       {vars; inits=Seq.push (RETURN e) inits; desc=Stm})
-  | _ -> assert false
-
-let arg_base : 'a tbase -> ('a cde -> 'b fun_decl) -> ('a -> 'b) fun_decl =
-  fun bt bodyf ->
-    let n = genname "n" in
-    let arg = of_desc @@ Exp (bt, Var n) in
-    let (ct,args,block) = bodyf arg in
-    (ct, (n,cbtype ~specs:[S_const] bt)::args,block)
-
-(* the second argument is an expression of int type that is a variable
-   that contains the length of the array
- *)
-let arg_array : ?mutble:bool -> 
-  'a tbase -> int cde -> ('a array cde -> 'b fun_decl) -> 
-  ('a array -> 'b) fun_decl =
-  fun ?(mutble=false) bt len_exp bodyf ->
-    let a = genname "a" in
-    let l = match len_exp with
-    | {desc=Exp (_, Var l)} -> l
-    | _ -> failwith "arg_array: len_exp must be a var reference"
-    in
-    let arg = of_desc @@ Varr (bt,a,Var l) in
-    let (ct,args,block) = bodyf arg in
-    (ct, (a,{specs=(if mutble then [] else [S_const]);
-             typ=Tptr (cbtype bt)})::args,block)
-
-let make_fun : ?name:string -> Format.formatter -> 'a fun_decl -> unit =
-  fun ?(name="fn") ppf (ctyp,args,block) ->
-  FUNDEF(ctyp,name, args, block) |> C_pp.pr_decl ppf 
-
-
-let cde_app1 : type a. string -> 'b tbase -> a cde -> 'b cde =
-  fun fname ret_typ ->
-    let ( && ) = Stdlib.( && ) in
-    function
-    | {vars;inits;desc=Exp(_,exp)} ->
-      let desc = Exp(ret_typ,Call (Var fname,[exp])) in
-      {vars;inits;desc}
-    | {vars; inits; desc=Stm}
-        when (Seq.is_empty vars && Seq.is_empty inits) -> (* when unit *)
-      of_desc (Exp(ret_typ,Call (Var fname,[Nothing])))
-    | _ -> failwith "not supported"
-
-let cde_app2 : type a b. string -> 'c tbase -> a cde -> b cde -> 'c cde =
-  fun fname ret_typ x y ->
-    match (x,y) with
-    | {desc=Exp(_,exp1)},{desc=Exp(_,exp2)} ->
-      merge x y (fun vars inits _ _ ->
-        let desc = Exp(ret_typ,Call (Var fname,[exp1;exp2])) in
-        {vars;inits;desc}
-      )
-    | _ -> failwith "not supported"
+;;
