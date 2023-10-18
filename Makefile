@@ -10,14 +10,13 @@ check-compiler:
 lib: 
 	cd lib && $(MAKE)
 
-.PHONY: test
-test:
-	cd test && $(MAKE)
-
 .PHONY: clean
 clean::
 	cd lib && $(MAKE) clean
 
+.PHONY: test
+test:
+	cd test && $(MAKE) test
 
 .PHONY: bench
 bench:
