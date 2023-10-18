@@ -12,5 +12,6 @@
 ### Misc. ###
 *.out
 depend
+*.eps
 
 
