@@ -136,14 +136,14 @@ let _ =
 
 (* put it all together *)
 
-let c =
+let ammod =
   C.one_arg_fun @@ fun arr ->
   am_modulate (message arr) srate_m carrier srate_c 0.9 |>
   map F32.( ( *. ) (lit 30000.)) |>
   iter write_s16_le.invoke
 
 (*
-          val c : (float array -> unit) code = .<
+          val ammod : (float array -> unit) code = .<
   fun arg1_8 ->
     let v_9 = Stdlib.ref 0 in
     for i_10 = 0 to (Stdlib.Array.length arg1_8) - 1 do
@@ -240,14 +240,14 @@ let _ =
 
 let carrier : F32.t cstream = sine_wave srate_c 540_000.
 
-let c =
+let ammod =
   C.one_arg_fun @@ fun arr ->
   am_modulate (message arr) srate_m carrier srate_c 0.9 |>
   map F32.( ( *. ) (lit 30000.)) |>
   iter write_s16_le.invoke
 
 (*
-          val c : (float array -> unit) code = .<
+          val ammod : (float array -> unit) code = .<
   fun arg1_42 ->
     let v_43 = Stdlib.ref 0. in
     for i_44 = 0 to (Stdlib.Array.length arg1_42) - 1 do
@@ -322,7 +322,7 @@ let write_s16_le : (F32.t C.exp -> unit C.stm) C.ff =
   in
   {invoke = C.dyn >> ff.invoke >> C.inj_stm }
 
-let c =
+let ammod =
   C.arg_base C.tint @@ fun n ->
   C.arg_array n F32.tbase @@ fun arr ->
   C.nullary_proc @@
@@ -330,7 +330,7 @@ let c =
   map F32.( ( *. ) (lit 30000.)) |>
   iter write_s16_le.invoke)
 
-let _ = C.pp_proc ~name:"ammod" Format.std_formatter c
+let _ = C.pp_proc ~name:"ammod" Format.std_formatter ammod
 
 (*
 void ammod(int const n_1,float * const a_2){

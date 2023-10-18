@@ -23,10 +23,10 @@ else ifeq ($(UNAME_OS),Darwin)
 		PBCOPY=pbcopy
 endif
 bench: ${OBJS}
-	# echo "#ifndef CMPLXF" >| /tmp/generated.c
-	# echo "#define CMPLXF(x, y) __builtin_complex ((float) (x), (float) (y))" >> /tmp/generated.c
-	# echo "#endif" >> /tmp/generated.c
-	$(OCAMLTOP) $(INCLUDES) $(LIB) $^ main.ml #| tail -n +2 >> /tmp/generated.c
+	echo "#ifndef CMPLXF" >| /tmp/generated.c
+	echo "#define CMPLXF(x, y) __builtin_complex ((float) (x), (float) (y))" >> /tmp/generated.c
+	echo "#endif" >> /tmp/generated.c
+	$(OCAMLTOP) $(INCLUDES) $(LIB) $^ main.ml | tail -n +2 >> /tmp/generated.c
 
 
 .mli.cmi:

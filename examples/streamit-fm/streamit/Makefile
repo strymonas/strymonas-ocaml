@@ -1,5 +1,5 @@
 .PHONY: bench memory clean display_options diff_base
-bench: utils.o
+bench:
 	sh bench.sh
 	cat result_f1.csv > result_both.csv
 	cat result_f2.csv | tail -n +2 >> result_both.csv

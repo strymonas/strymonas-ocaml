@@ -5,10 +5,6 @@ all: lib
 lib:
 	cd lib && $(MAKE)
 
-.PHONY: test
-test:
-	cd test && $(MAKE)
-
 .PHONY: clean
 clean::
 	cd lib && $(MAKE) clean
@@ -23,6 +19,10 @@ uninstall:
 reinstall:
 	$(MAKE) uninstall
 	$(MAKE) install
+
+.PHONY: test
+test:
+	cd test && $(MAKE) test
 
 .PHONY: bench
 bench:

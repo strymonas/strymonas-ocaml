@@ -1,4 +1,4 @@
-Benchmarking strymonas
+# Benchmarking strymonas
 
 Benchmarks rely on MetaOCaml since we generate OCaml code.
 Benckmarks also rely on MetaOCaml for infrastructure: to run OCaml code.
@@ -18,7 +18,7 @@ For external libraries
 
 `make benchmark_c`
 Generate code for C benchmarks
-C benchmarks are taken and tested in a separate directory: ../../C/bench/
+C benchmarks are taken and tested in a separate directory: ../../C/bench/, which corresponds to https://github.com/strymonas/strymonas-c/tree/main/bench
 
 The handwritten code for the benchmarks (the baseline) is in
 `benchmark_baseline.ml`
