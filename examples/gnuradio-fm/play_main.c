@@ -29,14 +29,6 @@ $ gcc -Ofast -mfpu=vfp -mfloat-abi=hard -march=armv6zk -mtune=arm1176jzf-s -W -W
 $ ./a.out | aplay -t raw -f FLOAT_LE -r 48000 -c 1 -i -
 $ hackrf_transfer -r - -f 77100000 -s 3072000 -g 30 -l 40 -a 0 | ./a.out | aplay -t raw -f FLOAT_LE -r 48000 -c 1 -i -
 */
-/* 
-Signal File Generaion:
-$ hackrf_transfer -r sps3072000_s8_30s.pcm -f 82500000 -s 3072000 -g 30 -l 40 -a 0 -n 92160000
-$ ffmpeg -f s8 -i sps3072000_s8_30s.pcm -f f32le sps3072000_c32_30s.pcm
-$ head --byte=122880000 sps3072000_c32_30s.pcm > sps3072000_c32_5s.pcm
-$ head --byte=73728000 sps3072000_c32_30s.pcm > sps3072000_c32_3s.pcm
-$ head --byte=49152000 sps3072000_c32_30s.pcm > sps3072000_c32_2s.pcm
-*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <complex.h>
