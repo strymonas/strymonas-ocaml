@@ -283,6 +283,9 @@ module type num = sig
   val ( -. ) : t exp -> t exp -> t exp
   val ( *. ) : t exp -> t exp -> t exp
   val ( /. ) : t exp -> t exp -> t exp
+  val equal  : t exp -> t exp -> bool exp
+  val ( < )  : t exp -> t exp -> bool exp
+  val ( > )  : t exp -> t exp -> bool exp
   val print  : t exp -> unit stm
 end
 
@@ -325,6 +328,9 @@ module F64 = struct
   let ( *. ) : t exp -> t exp -> t exp = fun x y -> .< .~x *. .~y >.
   let ( /. ) : t exp -> t exp -> t exp = fun x y -> .< .~x /. .~y >.
   let rem    : t exp -> t exp -> t exp = fun x y -> .< Float.rem .~x .~y >.
+  let equal  : t exp -> t exp -> bool exp = fun x y -> .< Float.equal .~x .~y >.
+  let ( < )  : t exp -> t exp -> bool exp = fun x y -> .<Stdlib.(.~x < .~y)>.
+  let ( > )  : t exp -> t exp -> bool exp = fun x y -> .<Stdlib.(.~x > .~y)>.
   let truncate : t exp -> int exp = fun x -> .<Stdlib.truncate .~x>.
   let of_int   : int exp -> t exp = fun x -> .<Stdlib.Float.of_int .~x>.
   let print    : t exp -> unit stm = fun x -> .<Format.printf "%.17g@\n" .~x>.
@@ -362,6 +368,33 @@ module C32 = struct
     .<Complex.{re= .~x; im= .~y}>.
   let scale  : float_t exp -> t exp -> t exp = fun s x -> 
     .<Stdlib.{re= .~s *. (.~x).re; im= .~s *. (.~x).im}>.
+  let equal  : t exp -> t exp -> bool exp = fun x y -> .<Stdlib.(.~x = .~y)>.
+  let ( < )  : t exp -> t exp -> bool exp = fun x y -> 
+    .<Stdlib.(Complex.norm2 .~x < Complex.norm2 .~y)>.
+  let ( > )  : t exp -> t exp -> bool exp = fun x y -> 
+    .<Stdlib.(Complex.norm2 .~x > Complex.norm2 .~y)>.
+end
+
+(* For now, use native OCaml integers, which are 63-bit *)
+module I64 = struct
+  type t = int
+  type num_t = int
+  type 'a tbase_desc +=
+    | TI64   : t tbase_desc
+  let to_t = Fun.id
+  let of_t = Fun.id
+  let tbase  : t tbase = {desc=TI64; zero = .<0>.}
+  let lit    : num_t -> t exp = fun x -> .< x >.
+  let of_int : int exp -> t exp = Fun.id
+  let neg    : t exp -> t exp = fun x -> .<Int.neg .~x >.
+  let ( +. ) : t exp -> t exp -> t exp = fun x y -> .<Stdlib.(.~x + .~y)>.
+  let ( -. ) : t exp -> t exp -> t exp = fun x y -> .<Stdlib.(.~x - .~y)>.
+  let ( *. ) : t exp -> t exp -> t exp = fun x y -> .<Stdlib.(.~x * .~y)>.
+  let ( /. ) : t exp -> t exp -> t exp = fun x y -> .<Stdlib.(.~x / .~y)>.
+  let equal  : t exp -> t exp -> bool exp = fun x y -> .<Stdlib.(.~x = .~y)>.
+  let ( < )  : t exp -> t exp -> bool exp = fun x y -> .<Stdlib.(.~x < .~y)>.
+  let ( > )  : t exp -> t exp -> bool exp = fun x y -> .<Stdlib.(.~x > .~y)>.
+  let print  : t exp -> unit stm = fun x -> .<Format.print_int .~x>.
 end
 
 

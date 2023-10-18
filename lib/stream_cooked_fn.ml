@@ -166,6 +166,9 @@ let find_first : ('a exp -> bool exp) -> 'a exp -> 'a cstream -> 'a stm =
 let sum_int   : int cstream -> int stm     =
   fun st -> st |> fold C.(+) C.(int 0)
 
+let sum_int_long : int cstream -> C.I64.t stm     =
+  fun st -> st |> fold C.I64.(fun a x -> a +. of_int x) C.I64.(lit 0)
+
 let average_int : int cstream -> C.F64.t stm  = fun st ->
   let open C in
   let- cnt = newref (int 0) in

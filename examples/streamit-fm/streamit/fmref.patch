@@ -1,0 +1,155 @@
+--- fmref.c	2023-09-29 20:12:28.000000000 +0900
++++ ../benchmarks_base.c	2023-10-18 16:34:51.000000000 +0900
+@@ -1,7 +1,12 @@
++/* Handwritten C codes for benchmarks */
++
++#include "benchmarks.h"
++
++// *** This is modifided fmref.c ***
+ /*
+  * fmref.c: C reference implementation of FM Radio
+  * David Maze <dmaze@cag.lcs.mit.edu>
+- * $Id: fmref.c,v 1.15 2003/11/05 18:13:10 dmaze Exp $
++ * $Id: fmref.c,v 1.15 2003-11-05 18:13:10 dmaze Exp $
+  */
+ 
+ #ifdef raw
+@@ -23,8 +28,6 @@
+ /* Must be at least NUM_TAPS+1: */
+ #define IN_BUFFER_LEN 10000
+ 
+-void begin(void);
+-
+ typedef struct FloatBuffer
+ {
+   float buff[IN_BUFFER_LEN];
+@@ -52,8 +55,9 @@
+ 
+ #define EQUALIZER_BANDS 10
+ float eq_cutoffs[EQUALIZER_BANDS + 1] =
+-  { 55.000004, 77.78174, 110.00001, 155.56354, 220.00002, 311.12695,
+-    440.00003, 622.25415, 880.00006, 1244.5078, 1760.0001 };
++  { 55.000000000000014, 77.781745930520245, 110.00000000000004, 155.56349186104052,
++    219.99999999999989, 311.12698372208104, 439.99999999999983, 622.25396744416219,
++    879.99999999999977, 1244.5079348883232, 1759.9999999999995};
+ typedef struct EqualizerData
+ {
+   LPFData lpf[EQUALIZER_BANDS + 1];
+@@ -63,34 +67,20 @@
+ void init_equalizer(EqualizerData *data);
+ void run_equalizer(FloatBuffer *fbin, FloatBuffer *fbout, EqualizerData *data);
+ 
+-void write_floats(FloatBuffer *fb);
++// void write_floats(FloatBuffer *fb);
++// void write_floats_to_var(FloatBuffer *fb);
++void sum_floats(FloatBuffer *fb);
+ 
+ /* Globals: */
+ static int numiters = -1;
++static float out = 0.0;
+ 
+-#ifndef raw
+-int main(int argc, char **argv)
++float fmradio(void)
+ {
+-  int option;
+-
+-  while ((option = getopt(argc, argv, "i:")) != -1)
+-  {
+-    switch(option)
+-    {
+-    case 'i':
+-      numiters = atoi(optarg);
+-    }
+-  }
++  numiters = 1000000;
++  out = 0.0;
+ 
+-  begin();
+-  return 0;
+-}
+-#endif
+ 
+-
+-
+-void begin(void)
+-{
+   int i;
+   FloatBuffer fb1, fb2, fb3, fb4;
+   LPFData lpf_data;
+@@ -120,7 +110,7 @@
+   }
+ 
+   /* Main loop: */
+-  while (numiters == -1 || numiters-- > 0)
++  while (numiters-- > 0)
+   {
+     /* The low-pass filter will need NUM_TAPS+1 items; read them if we
+      * need to. */
+@@ -129,8 +119,13 @@
+     run_lpf(&fb1, &fb2, &lpf_data);
+     run_demod(&fb2, &fb3);
+     run_equalizer(&fb3, &fb4, &eq_data);
+-    write_floats(&fb4);
++    // write_floats(&fb4);// just for debugging
++    // write_floats_to_var(&fb4);
++    sum_floats(&fb4);
+   }
++  // printf("%f", out);
++
++  return out;
+ }
+ 
+ void fb_compact(FloatBuffer *fb)
+@@ -160,6 +155,7 @@
+   return 0;
+ }
+ 
++// XXX 0,1,2,3,...
+ void get_floats(FloatBuffer *fb)
+ {
+   static int x = 0;
+@@ -220,7 +216,7 @@
+   float temp, gain;
+   gain = MAX_AMPLITUDE * SAMPLING_RATE / (BANDWIDTH * M_PI);
+   temp = fbin->buff[fbin->rpos] * fbin->buff[fbin->rpos + 1];
+-  temp = gain * atan(temp);
++  temp = gain * atanf(temp);
+   fbin->rpos++;
+   fb_ensure_writable(fbout, 1);
+   fbout->buff[fbout->rlen++] = temp;
+@@ -275,14 +271,26 @@
+   fbout->buff[fbout->rlen++] = sum;
+ }
+ 
+-void write_floats(FloatBuffer *fb)
++// void write_floats(FloatBuffer *fb)
++// {
++//   /* printf() any data that's available: */
++// #ifdef raw
++//   while (fb->rpos < fb->rlen)
++//     print_float(fb->buff[fb->rpos++]);
++// #else
++//   while (fb->rpos < fb->rlen)
++//     printf("%f\n", fb->buff[fb->rpos++]);
++// #endif
++// }
++
++// void write_floats_to_var(FloatBuffer *fb)
++// {
++//   while (fb->rpos < fb->rlen)
++//     out = fb->buff[fb->rpos++];
++// }
++
++void sum_floats(FloatBuffer *fb)
+ {
+-  /* printf() any data that's available: */
+-#ifdef raw
+-  while (fb->rpos < fb->rlen)
+-    print_float(fb->buff[fb->rpos++]);
+-#else
+   while (fb->rpos < fb->rlen)
+-    printf("%f\n", fb->buff[fb->rpos++]);
+-#endif
++    out += fb->buff[fb->rpos++];
+ }

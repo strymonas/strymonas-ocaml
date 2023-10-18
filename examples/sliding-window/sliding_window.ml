@@ -231,30 +231,30 @@ let _ = let module M = Test4(CC) in
 
 (*
 void fn(){
-  int64_t x_1 = 1;
-  int64_t x_2 = 0;
-  int64_t a_3[4];
-  static int64_t a_4[9] = {1,2,3,4,5,6,7,8,9};;
-  int64_t x_5 = 0;
-  for (int64_t i_6 = 0; i_6 < 9; i_6 += 1){
-    int64_t const t_7 = a_4[i_6];
+  int x_1 = 1;
+  int x_2 = 0;
+  int a_3[4];
+  static int a_4[9] = {1,2,3,4,5,6,7,8,9};;
+  int x_5 = 0;
+  for (int i_6 = 0; i_6 < 9; i_6 += 1){
+    int const t_7 = a_4[i_6];
     if ((t_7 % 2) == 1)
     {
-      int64_t const t_8 = x_5;
+      int const t_8 = x_5;
       x_5++;
       (a_3[t_8 & 3]) = t_7;
       if (t_8 < 2)
       
         x_2 = x_2 + t_7;
       else {
-        int64_t const t_9 = x_2 + t_7;
+        int const t_9 = x_2 + t_7;
         double const t_10 = ((double)t_9) / 3.;
-        int64_t const t_11 = a_3[(t_8 - 2) & 3];
+        int const t_11 = a_3[(t_8 - 2) & 3];
         x_2 = t_9 - t_11;
-        int64_t const t_12 = (int64_t)t_10;
-        int64_t const t_13 = x_1;
+        int const t_12 = (int)t_10;
+        int const t_13 = x_1;
         x_1++;
-        printf("%ld\n",(100 * t_13) + t_12);
+        printf("%d\n",(100 * t_13) + t_12);
       }
     }
   }
