@@ -31,4 +31,6 @@ backends/C/offshoringIR_pp.ml
 stream_cooked.mli               Interface
 stream_cooked_fn.ml             Implementation: functor of Cde
 
+window_fn.ml                    Windowing
+
 Makefile                How to make it

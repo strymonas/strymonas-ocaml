@@ -1,4 +1,16 @@
+### OCaml ###
+*.annot
+*.cmo
+*.cma
+*.cmi
+*.a
 *.o
-*.cm*
-/lib/depend
-/lib/stream.a
+*.cmx
+*.cmxs
+*.cmxa
+
+### Misc. ###
+*.out
+depend
+
+

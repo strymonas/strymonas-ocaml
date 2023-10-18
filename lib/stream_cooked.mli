@@ -45,12 +45,11 @@ val iter : ('a -> unit stm) -> 'a stream -> unit stm
 
 (* Specializations of the above, convenient 
    especially for testing and benchmarks *)
-val find_first : ('a exp -> bool exp) -> 'a exp -> 'a cstream -> 'a stm
-val sum_int     : int cstream -> int stm
-(*
-val average_int : int cstream -> F64.t stm
-*)
-val count :  'a stream  -> int stm
+val find_first   : ('a exp -> bool exp) -> 'a exp -> 'a cstream -> 'a stm
+val sum_int      : int cstream -> int stm
+val sum_int_long : int cstream -> I64.t stm
+val average_int  : int cstream -> F64.t stm
+val count        : 'a stream  -> int stm
 
 
 (* Transformers *)

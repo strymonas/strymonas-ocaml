@@ -13,25 +13,21 @@ OCAMLFND=ocamlfind -toolchain metaocaml ocamlopt -package streaming,batteries,it
 COMMON_OBJS=util.cmx benchmark_types.cmx benchmark.cmx benchmark_abstract.cmx
 OBJS=$(COMMON_OBJS) benchmark_strymonas.cmx 
 OBJS_BASE=$(COMMON_OBJS) benchmark_baseline.cmx 
-OBJS_V1=$(COMMON_OBJS) benchmark_v1.cmx 
 OBJS_STREAMING=$(COMMON_OBJS) benchmark_streaming.cmx 
 OBJS_BATTERIES=$(COMMON_OBJS) benchmark_batteries.cmx 
-OBJS_SEQ=$(COMMON_OBJS) benchmark_seq.cmx 
+# OBJS_SEQ=$(COMMON_OBJS) benchmark_seq.cmx 
 OBJS_ITER=$(COMMON_OBJS) benchmark_iter.cmx 
 INCLUDES=-I ../lib -I ../lib/backends/Trx
 
 .PHONY: all clean # intf 
-all: lib lib-base lib-v1 lib-streaming lib-batteries lib-seq lib-iter
+all: lib lib-base lib-streaming lib-batteries lib-seq lib-iter
 
-.PHONY: lib lib-base lib-v1 lib-streaming lib-batteries lib-seq lib-iter
+.PHONY: lib lib-base lib-streaming lib-batteries lib-seq lib-iter
 lib:
 	$(OCAMLOPT) -o bench.out $(INCLUDES) lifts.cmx stream.cmxa $(OBJS:.cmx=.ml)
 
 lib-base:
 	$(OCAMLOPT) -o bench-base.out $(INCLUDES) lifts.cmx stream.cmxa $(OBJS_BASE:.cmx=.ml)
-
-lib-v1:
-	$(OCAMLOPT) -o bench-v1.out $(INCLUDES) -I ../libv1 lifts.cmx stream.cmxa streamv1.cmxa $(OBJS_V1:.cmx=.ml)
 
 # External libraries
 lib-streaming:
@@ -40,8 +36,8 @@ lib-streaming:
 lib-batteries:
 	$(OCAMLFND) -o bench-batteries.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_BATTERIES:.cmx=.ml)
 
-lib-seq:
-	$(OCAMLFND) -o bench-seq.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_SEQ:.cmx=.ml)
+# lib-seq:
+# 	$(OCAMLFND) -o bench-seq.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_SEQ:.cmx=.ml)
 
 lib-iter:
 	$(OCAMLFND) -o bench-iter.out $(INCLUDES) -linkpkg lifts.cmx stream.cmxa $(OBJS_ITER:.cmx=.ml)
@@ -71,9 +67,9 @@ bench-batteries: lib-batteries
 	./bench-batteries.out >> bench_result.txt && \
 	cat ./bench_result.txt | grep batteries >| bench_batteries.dat
 
-bench-seq: lib-seq
-	./bench-seq.out >> bench_result.txt && \
-	cat ./bench_result.txt | grep seq >| bench_seq.dat
+# bench-seq: lib-seq
+# 	./bench-seq.out >> bench_result.txt && \
+# 	cat ./bench_result.txt | grep seq >| bench_seq.dat
 
 bench-iter: lib-iter
 	./bench-iter.out >> bench_result.txt && \
@@ -89,9 +85,5 @@ benchmark_c:
 	$(OCAML) $(INCLUDES) -I ../lib/backends/C stream.cma benchmark_c.ml
 
 
-.PHONY: plot-stream-streaming
-plot-stream-streaming:
-	gnuplot plot_stream_streaming.plt
-
 clean:
-	rm -f *.cm[ixo] *.[oa] *.txt *.dat *.eps *.out
+	rm -f *.cm[ixo] *.[oa] *.txt *.dat *.eps *.out *.tmp
