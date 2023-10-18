@@ -39,6 +39,9 @@ module type num = sig
   val ( -. ) : t exp -> t exp -> t exp
   val ( *. ) : t exp -> t exp -> t exp
   val ( /. ) : t exp -> t exp -> t exp
+  val equal  : t exp -> t exp -> bool exp
+  val ( < )  : t exp -> t exp -> bool exp
+  val ( > )  : t exp -> t exp -> bool exp
   val print  : t exp -> unit stm
 end
 
@@ -70,5 +73,9 @@ module F64 : (flonum with type num_t = float)
 module F32 : (flonum with type num_t = float)
 module C32 : (cmplxnum with type num_t = Complex.t and type float_t = F32.t)
 
+module I64 : sig
+  include num with type num_t = int
+  val of_int   : int exp -> t exp
+end
 
 

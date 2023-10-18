@@ -111,8 +111,9 @@ let ( - ) : int exp -> int exp -> int exp  = fun x y ->
   | _ -> lift2 Stdlib.( - ) int C.( - ) x y
 let ( * ) : int exp -> int exp -> int exp  = fun x y ->
   match (x,y) with
-  | ({sta=Sta 0},_) | (_,{sta=Sta 0}) -> int 0
-  | ({sta=Sta 1},x) | (x,{sta=Sta 1}) -> x
+  | ({sta=Sta 0},_)  | (_,{sta=Sta 0})  -> int 0
+  | ({sta=Sta 1},x)  | (x,{sta=Sta 1})  -> x
+  | ({sta=Sta -1},x) | (x,{sta=Sta -1}) -> ~- x
   | _ -> lift2 Stdlib.( * ) int C.( * ) x y
 let ( / ) : int exp -> int exp -> int exp  = lift2 Stdlib.( / ) int C.( / ) 
 let (mod) : int exp -> int exp -> int exp  = fun x y ->
@@ -325,6 +326,9 @@ module type num = sig
   val ( -. ) : t exp -> t exp -> t exp
   val ( *. ) : t exp -> t exp -> t exp
   val ( /. ) : t exp -> t exp -> t exp
+  val equal  : t exp -> t exp -> bool exp
+  val ( < )  : t exp -> t exp -> bool exp
+  val ( > )  : t exp -> t exp -> bool exp
   val print  : t exp -> unit stm
 end
 
@@ -353,6 +357,33 @@ module type cmplxnum = sig
 end
 
 
+module I64 : sig
+  include num with type num_t = int
+  val of_int   : int exp -> t exp
+  end = struct
+  include C.I64
+  let lit    : num_t -> t exp = fun x -> {sta=Sta (to_t x); dyn=C.I64.lit x}
+  let int : t -> t exp = of_t >> lit
+  let tlift1 : (int -> int) -> (t -> t) = fun f -> of_t >> f >> to_t
+  let tlift2 : (int -> int -> int) -> (t -> t -> t) = fun f x y -> 
+    f (of_t x) (of_t y) |> to_t
+  let tliftb : (int -> int -> bool) -> (t -> t -> bool) = fun f x y -> 
+    f (of_t x) (of_t y)
+  let neg    = lift1 (tlift1 Int.neg) int C.I64.neg 
+  let ( +. ) = lift2 (tlift2 Stdlib.( + )) int C.I64.( +. ) 
+  let ( -. ) = lift2 (tlift2 Stdlib.( - )) int C.I64.( -. ) 
+  let ( *. ) = lift2 (tlift2 Stdlib.( * )) int C.I64.( *. ) 
+  let ( /. ) = lift2 (tlift2 Stdlib.( / )) int C.I64.( /. )
+  let equal  = lift2 (tliftb Stdlib.( = )) bool C.I64.( equal ) 
+  let ( >  ) = lift2 (tliftb Stdlib.( > )) bool C.I64.( > )
+  let ( <  ) = lift2 (tliftb Stdlib.( < )) bool C.I64.( < )
+  (*
+  let rem    = lift2 (tlift2 Stdlib.Int.rem) int C.I64.rem
+  *)
+  let of_int = lift1 (to_t) int C.I64.of_int
+  let print = dyn >> C.I64.print >> inj_stm
+end
+
 module F64 : (flonum with type num_t = float and type t = C.F64.t) = struct
   include C.F64
   let lit    : num_t -> t exp = fun x -> {sta=Sta (to_t x); dyn=C.F64.lit x}
@@ -360,12 +391,22 @@ module F64 : (flonum with type num_t = float and type t = C.F64.t) = struct
   let tlift1 : (float -> float) -> (t -> t) = fun f -> of_t >> f >> to_t
   let tlift2 : (float -> float -> float) -> (t -> t -> t) = fun f x y -> 
     f (of_t x) (of_t y) |> to_t
+  let tliftb : (float -> float -> bool) -> (t -> t -> bool) = fun f x y -> 
+    f (of_t x) (of_t y)
   let neg    = lift1 (tlift1 Float.neg) float C.F64.neg 
   let ( +. ) = lift2 (tlift2 Stdlib.( +. )) float C.F64.( +. ) 
   let ( -. ) = lift2 (tlift2 Stdlib.( -. )) float C.F64.( -. ) 
-  let ( *. ) = lift2 (tlift2 Stdlib.( *. )) float C.F64.( *. ) 
+  let ( *. ) x y = match (x,y) with
+  | ({sta=Sta x},{sta=Sta y}) -> tlift2 Stdlib.( *. ) x y |> float
+  | (({sta=Sta y},_)  | (_,{sta=Sta y})) when Stdlib.(of_t y = 0.)  -> lit 0.
+  | (({sta=Sta y},x)  | (x,{sta=Sta y})) when Stdlib.(of_t y = 1.) -> x
+  | (({sta=Sta y},x)  | (x,{sta=Sta y})) when Stdlib.(of_t y = -1.) -> neg x
+  | _ -> inj2 C.F64.( *. ) x y
   let ( /. ) = lift2 (tlift2 Stdlib.( /. )) float C.F64.( /. ) 
   let rem    = lift2 (tlift2 Stdlib.Float.rem) float C.F64.rem
+  let equal  = lift2 (tliftb Float.equal) bool C.F64.( equal ) 
+  let ( >  ) = lift2 (tliftb Stdlib.( > )) bool C.F64.( > )
+  let ( <  ) = lift2 (tliftb Stdlib.( < )) bool C.F64.( < )
   let truncate = lift1 (of_t >> Stdlib.truncate) int C.F64.truncate
   let of_int = lift1 (Stdlib.float_of_int >> to_t) float C.F64.of_int
   let print = dyn >> C.F64.print >> inj_stm
@@ -381,12 +422,22 @@ module F32 : (flonum with type num_t = float and type t = C.F32.t) = struct
   let tlift1 : (float -> float) -> (t -> t) = fun f -> of_t >> f >> to_t
   let tlift2 : (float -> float -> float) -> (t -> t -> t) = fun f x y -> 
     f (of_t x) (of_t y) |> to_t
+  let tliftb : (float -> float -> bool) -> (t -> t -> bool) = fun f x y -> 
+    f (of_t x) (of_t y)
   let neg    = lift1 (tlift1 Float.neg) float C.F32.neg 
   let ( +. ) = lift2 (tlift2 Stdlib.( +. )) float C.F32.( +. ) 
   let ( -. ) = lift2 (tlift2 Stdlib.( -. )) float C.F32.( -. ) 
-  let ( *. ) = lift2 (tlift2 Stdlib.( *. )) float C.F32.( *. ) 
+  let ( *. ) x y = match (x,y) with
+  | ({sta=Sta x},{sta=Sta y}) -> tlift2 Stdlib.( *. ) x y |> float
+  | (({sta=Sta y},_)  | (_,{sta=Sta y})) when Stdlib.(of_t y = 0.)  -> lit 0.
+  | (({sta=Sta y},x)  | (x,{sta=Sta y})) when Stdlib.(of_t y = 1.) -> x
+  | (({sta=Sta y},x)  | (x,{sta=Sta y})) when Stdlib.(of_t y = -1.) -> neg x
+  | _ -> inj2 C.F32.( *. ) x y
   let ( /. ) = lift2 (tlift2 Stdlib.( /. )) float C.F32.( /. ) 
   let rem    = lift2 (tlift2 Stdlib.Float.rem) float C.F32.rem
+  let equal  = lift2 (tliftb Float.equal) bool C.F32.( equal ) 
+  let ( >  ) = lift2 (tliftb Stdlib.( > )) bool C.F32.( > )
+  let ( <  ) = lift2 (tliftb Stdlib.( < )) bool C.F32.( < )
   let truncate = lift1 (of_t >> Stdlib.truncate) int C.F32.truncate
   let of_int = lift1 (Stdlib.float_of_int >> to_t) float C.F32.of_int
   let print = dyn >> C.F32.print >> inj_stm
@@ -404,6 +455,9 @@ module C32 : (cmplxnum with type num_t = Complex.t and type float_t = F32.t
     fun f -> of_t >> f >> to_t
   let tlift2 : (Complex.t -> Complex.t -> Complex.t) -> (t -> t -> t) = 
     fun f x y -> f (of_t x) (of_t y) |> to_t
+  let tliftb : (Complex.t -> Complex.t -> bool) -> (t -> t -> bool) = 
+    fun f x y -> 
+    f (of_t x) (of_t y)
   let neg    = lift1 (tlift1 Complex.neg) cmplx C.C32.neg 
   let ( +. ) = lift2 (tlift2 Complex.add) cmplx C.C32.( +. ) 
   let ( -. ) = lift2 (tlift2 Complex.sub) cmplx C.C32.( -. ) 
@@ -426,6 +480,9 @@ module C32 : (cmplxnum with type num_t = Complex.t and type float_t = F32.t
     Complex.{re=(F32.of_t s) *. (of_t x).re; 
              im=(F32.of_t s) *. (of_t x).im} |> to_t) cmplx
       C.C32.scale
+  let equal  = lift2 (tliftb Stdlib.( = )) bool C.C32.( equal ) 
+  let ( < ) = fun x y -> F32.(norm2 x > norm2 y)
+  let ( > ) = fun x y -> F32.(norm2 x < norm2 y)
 end
 
 

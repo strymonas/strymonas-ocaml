@@ -49,15 +49,15 @@ let ex2 = ex1 |> filter C.(fun e -> e mod (int 17) > int 7)
 let _ = C.print_code ~name:"fn" ex2
 
 (*
-int64_t fn(){
-  int64_t x_1 = 0;
-  int64_t x_2 = 10;
-  int64_t x_3 = 1;
+int fn(){
+  int x_1 = 0;
+  int x_2 = 10;
+  int x_3 = 1;
   while (x_2 > 0)
   {
-    int64_t const t_4 = x_3;
+    int const t_4 = x_3;
     x_3++;
-    int64_t const t_5 = t_4 * t_4;
+    int const t_5 = t_4 * t_4;
     if ((t_5 % 17) > 7)
     {
       x_2--;

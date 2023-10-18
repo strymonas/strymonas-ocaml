@@ -56,12 +56,12 @@ let decode : byte cstream -> bool cstream = fun st ->
 let generate ppf =
   let () = C.print_one_array "sum" ppf C_cde.tint @@ fun arr ->
       of_arr arr
-      |> sum_int
+      |> sum_int_long
   in
   let () = C.print_one_array "sum_squares" ppf C_cde.tint @@ fun arr ->
        of_arr arr
        |> map C.(fun x -> x * x)
-       |> sum_int
+       |> sum_int_long
   in
   let () = C.print_one_array "maps" ppf C_cde.tint @@ fun arr ->
       of_arr arr
@@ -72,7 +72,7 @@ let generate ppf =
       |> map C.(fun x -> x * int 5)
       |> map C.(fun x -> x * int 6)
       |> map C.(fun x -> x * int 7)
-      |> sum_int
+      |> sum_int_long
   in
   let () = C.print_one_array "filters" ppf C_cde.tint @@ fun arr ->
      of_arr arr
@@ -83,52 +83,52 @@ let generate ppf =
      |> filter C.(fun x -> x > int 5)
      |> filter C.(fun x -> x > int 6)
      |> filter C.(fun x -> x > int 7)
-     |> sum_int
+     |> sum_int_long
   in
   let () = C.print_one_array "sum_squares_even" ppf C_cde.tint @@ fun arr ->
      of_arr arr
      |> filter C.(fun x -> x mod (int 2) = int 0)
      |> map C.(fun x -> x * x)
-     |> sum_int
+     |> sum_int_long
   in
   let () = C.print_two_array "cart" ppf (C_cde.tint,C_cde.tint) @@ 
   fun (arr1,arr2) ->
        of_arr arr1
        |> flat_map (fun x -> of_arr arr2 |> map C.(fun y -> x * y))
-       |> sum_int
+       |> sum_int_long
   in
   let () = C.print_two_array "dot_product" ppf (C_cde.tint,C_cde.tint) @@ 
   fun (arr1,arr2)->
      zip_with C.( * ) (of_arr arr1) (of_arr arr2)
-     |> sum_int
+     |> sum_int_long
   in
   let () = C.print_two_array "flatmap_after_zipwith" ppf 
       (C_cde.tint,C_cde.tint) @@ 
   fun (arr1,arr2) ->
      zip_with C.( + ) (of_arr arr1) (of_arr arr1)
      |> flat_map (fun x -> of_arr arr2|> map C.(fun el -> el + x))
-     |> sum_int
+     |> sum_int_long
   in
   let () = C.print_two_array "zipwith_after_flatmap" ppf 
       (C_cde.tint,C_cde.tint) @@ fun (arr1,arr2) ->
      of_arr arr1
      |> flat_map (fun x -> of_arr arr2 |> map C.(fun y -> y + x))
      |> zip_with C.( + ) (of_arr arr1)
-     |> sum_int
+     |> sum_int_long
   in
   let () = C.print_two_array "flat_map_take" ppf (C_cde.tint,C_cde.tint) @@ 
   fun (arr1,arr2)->
         of_arr arr1
         |> flat_map (fun x -> of_arr arr2 |> map C.(fun y -> x * y))
         |> take (C.int 20_000_000)
-        |> sum_int
+        |> sum_int_long
   in
   let () = C.print_two_array "zip_filter_filter" ppf 
       (C_cde.tint,C_cde.tint) @@ fun (arr1,arr2) ->
   zip_with C.( + )
    (of_arr arr1 |> filter C.(fun x -> x > int 7))
    (of_arr arr2 |> filter C.(fun x -> x > int 5))
-  |> sum_int
+  |> sum_int_long
   in
   let () = C.print_two_array "zip_flat_flat" ppf (C_cde.tint,C_cde.tint) @@ 
   fun (arr1,arr2) ->
@@ -138,13 +138,13 @@ let generate ppf =
    (of_arr arr2 |> 
      flat_map (fun x -> of_arr arr1 |> map C.(fun y -> x - y)))
   |> take (C.int 200_000_000)
-  |> sum_int
+  |> sum_int_long
   in 
   let () = C.print_two_array "decoding" ppf (C_cde.tint,C_cde.tint) @@ 
   fun (arr1,arr2) ->
     zip_with C.(||) (of_arr arr1 |> decode) (of_arr arr2 |> decode)
     |> map C.(fun x -> cond x (int 1) (int 0))
-    |> sum_int
+    |> sum_int_long
   in
   ()
 

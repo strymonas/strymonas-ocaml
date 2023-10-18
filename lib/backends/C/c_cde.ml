@@ -39,10 +39,10 @@ let tbool  : bool  tbase =
 (* The default int type. Our benchmarks use int accumulators that do need
    64-bits
 *)
-let tint_ntyp = I.I64
+let tint_ntyp = I.I32
 let tint   : int   tbase =
    {desc=TBint; ityp=I.TNum tint_ntyp; 
-    printf_fn = (fun e -> make_printf "%ld" [e]);
+    printf_fn = (fun e -> make_printf "%d" [e]);
     zero=I.(Const (Const_num (tint_ntyp,"0")));
     deser=int_of_string;}
 
@@ -134,7 +134,7 @@ let ret  : 'a exp -> 'a stm = fun (ty,e) -> (TBase ty, I.of_exp e)
 
 (* Simple i/o, useful for debugging. Newline at the end *)
 let print_int : int exp -> unit stm = fun (ty,e) ->
-   (TVoid, make_printf "%ld\n" [e])
+   (TVoid, make_printf "%d\n" [e])
 
 
 (* Local let, without movement
@@ -427,6 +427,9 @@ module type num = sig
   val ( -. ) : t exp -> t exp -> t exp
   val ( *. ) : t exp -> t exp -> t exp
   val ( /. ) : t exp -> t exp -> t exp
+  val equal  : t exp -> t exp -> bool exp
+  val ( < )  : t exp -> t exp -> bool exp
+  val ( > )  : t exp -> t exp -> bool exp
   val print  : t exp -> unit stm
 end
 
@@ -454,6 +457,40 @@ module type cmplxnum = sig
   val scale    : float_t exp -> t exp -> t exp
 end
 
+module I64 = struct
+  type t = int
+  type num_t = int
+  type 'a tbase_desc +=
+    | TI64   : t tbase_desc
+  let to_t = Fun.id
+  let of_t = Fun.id
+
+  let tbase : t tbase =
+   {desc=TI64; ityp=I.TNum I64; 
+    zero=I.(Const (Const_num (I64,"0.")));
+    printf_fn = (fun e -> make_printf "%ld\n" [e]);
+    deser=int_of_string;}
+
+  let print    : t exp -> unit stm = fun (_,e) -> (TVoid, tbase.printf_fn e)
+
+  let lit : num_t -> t exp = fun x -> 
+    exp tbase I.(Const (Const_num (I64, string_of_int x)))
+
+  let neg   = unary_op (tbase,I.OP.NEG I64,tbase)
+
+  let ( +.) = binary_op (tbase,tbase,I.OP.ADD I64,tbase)
+  let ( -.) = binary_op (tbase,tbase,I.OP.SUB I64,tbase)
+  let ( *.) = binary_op (tbase,tbase,I.OP.MUL I64,tbase)
+  let ( /.) = binary_op (tbase,tbase,I.OP.DIV I64,tbase)
+  let rem   = binary_op (tbase,tbase,I.OP.MOD I64,tbase)
+
+  let equal = binary_op (tbase,tbase,I.OP.EQ I64,tbool)
+  let ( < ) = binary_op (tbase,tbase,I.OP.LT I64,tbool)
+  let ( > ) = binary_op (tbase,tbase,I.OP.GT I64,tbool)
+
+  let of_int   : int exp -> t exp = fun (_,e) -> 
+    exp_app tbase I.(OP.CAST {onto=I64; from=tint_ntyp}) [e]
+end
 
 module F64 = struct
   type t = float
@@ -486,6 +523,10 @@ module F64 = struct
   let ( *.) = binary_op (tbase,tbase,I.OP.MUL F64,tbase)
   let ( /.) = binary_op (tbase,tbase,I.OP.DIV F64,tbase)
   let rem   = binary_op (tbase,tbase,I.OP.MOD F64,tbase)
+
+  let equal = binary_op (tbase,tbase,I.OP.EQ F64,tbool)
+  let ( < ) = binary_op (tbase,tbase,I.OP.LT F64,tbool)
+  let ( > ) = binary_op (tbase,tbase,I.OP.GT F64,tbool)
 
   let truncate : t exp -> int exp = fun (_,e) -> 
     exp_app tint I.(OP.CAST {from=F64; onto=tint_ntyp}) [e]
@@ -531,6 +572,10 @@ module F32 = struct
   let ( *.) = binary_op (tbase,tbase,I.OP.MUL F32,tbase)
   let ( /.) = binary_op (tbase,tbase,I.OP.DIV F32,tbase)
   let rem   = binary_op (tbase,tbase,I.OP.MOD F32,tbase)
+
+  let equal = binary_op (tbase,tbase,I.OP.EQ F32,tbool)
+  let ( < ) = binary_op (tbase,tbase,I.OP.LT F32,tbool)
+  let ( > ) = binary_op (tbase,tbase,I.OP.GT F32,tbool)
 
   let truncate : t exp -> int exp = fun (_,e) -> 
     exp_app tint I.(OP.CAST {from=F32; onto=tint_ntyp}) [e]
@@ -600,6 +645,10 @@ module C32 = struct
     exp tbase I.(FunCall (I.OP.name "CMPLXF",[x;y]))
   let scale    : float_t exp -> t exp -> t exp = fun (_,s) (_,e) ->
     exp tbase I.(FunCall (I.OP.MUL C32, [s;e]))
+
+  let equal = binary_op (tbase,tbase,I.OP.EQ C32,tbool)
+  let ( < ) = fun x y -> F32.(norm2 x > norm2 y)
+  let ( > ) = fun x y -> F32.(norm2 x < norm2 y)
 end
 
 

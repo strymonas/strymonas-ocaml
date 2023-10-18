@@ -87,6 +87,14 @@ module MiscTest(C: cde) = struct
   let () = check_int "test_scan1" 
      (List.fold_left ( + ) 0 [1;3;6;10;15;21;28;36;45;55]) @@ test_scan1
 
+  let test_int64 = 
+    from_to C.(int 0x7fff_fff0) C.(int 0x7fff_ffff) |> map C.I64.of_int |>
+    fold C.I64.(+.) C.(I64.lit 0)
+  let () = check "test_int 64"  (fun x -> C.I64.of_t x |> string_of_int)
+      (List.init 16 ((+) 0x7fff_fff0) |>
+       List.fold_left ( + ) 0 |> C.I64.to_t) @@ 
+    test_int64
+
   let test_atan64 = 
     from_to C.(int 1) C.(int 10) |> map C.F64.of_int |>
     map C.F64.atan.invoke |> 
@@ -127,6 +135,16 @@ module MiscTest(C: cde) = struct
   let () = check "test complex1" string_of_cmlx
       (C.C32.to_t Complex.{re= 2.;im=36.})
       test_complex1 
+
+  let test_complex11 = 
+    let open C in
+    let open C.C32 in
+    letl (lit Complex.{re=2.;im=3.}) @@ fun a ->
+    letl (lit Complex.{re=1.;im=5.}) @@ fun b ->
+    cond C32.(a > b) (int 0) (int 1) |> ret
+
+  let () = check_int "test complex11" 0
+      test_complex11
 
   let test_complex2 = 
     let open C in
