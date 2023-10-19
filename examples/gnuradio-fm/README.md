@@ -4,7 +4,7 @@
 - [baseline-pi](baseline-pi) is a GNU Radio FM reception bench for Raspberry Pi Zero
 
 These benchmarks are compared with strymons-generated C codes about the same FM reception bench as follows:
-1. First of all, prepare signal file sources for the bench while connecting to HackRF One:
+1. First of all, prepare signal file sources for the bench while your PC is connected to HackRF One:
     ```
     e.g.:
     $ hackrf_transfer -r sps3072000_s8_30s.pcm -f 82500000 -s 3072000 -g 30 -l 40 -a 0 -n 92160000
