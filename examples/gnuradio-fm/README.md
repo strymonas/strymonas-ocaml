@@ -1,6 +1,6 @@
 # FM Reception about GNU Radio 
 
-- [baseline](baseline) is a GNU Radio FM reception bench for x86_64 
+- [baseline](baseline) is a GNU Radio FM reception bench for x86-64 
 - [baseline-pi](baseline-pi) is a GNU Radio FM reception bench for Raspberry Pi Zero
 
 These benchmarks are compared with strymons-generated C codes about the same FM reception bench as follows:
