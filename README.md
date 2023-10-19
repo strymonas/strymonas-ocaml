@@ -1,4 +1,4 @@
-# Strymonas on OCaml
+# strymonas-ocaml
 Strymonas is a code-generation–based library (embedded DSL) for fast, bulk, single-thread in-memory stream processing. This repository focuses on strymonas for OCaml and BER MetaOCaml, which generates C and OCaml code.
 
 Check https://strymonas.github.io/ for the latest situation of the project.
