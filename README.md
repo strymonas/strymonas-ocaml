@@ -20,7 +20,7 @@ You can see [lib/0README.dr](lib/0README.dr) before exploring the source code to
 There are many examples (and some of them include benchmarks as mentioned below):
 - [examples/TryFirst](examples/TryFirst): literally "TryFirst"!
 - [examples/amradio](examples/amradio): an SDR application
-- [examples/sliding-window](examples/sliding-window): a base of the following two SDR examples (related to FIR filtering)
+- [examples/sliding-window](examples/sliding-window): a base of the following two SDR examples (related to FIR filtering) and [lib/window_fn.ml](lib/window_fn.ml)
 - [examples/streamit-fm](examples/streamit-fm): an SDR benchmark and application related to [StreamIt](https://groups.csail.mit.edu/cag/streamit/)
 - [examples/gnuradio-fm](examples/gnuradio-fm): an SDR benchmark and application related to [GNU Radio](https://www.gnuradio.org/), generating only C code, depending on [HackRF One](https://greatscottgadgets.com/hackrf/one/)
 
