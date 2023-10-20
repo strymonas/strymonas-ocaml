@@ -7,12 +7,23 @@ check-compiler:
 	|| (echo 1>&2 "OCaml must be 4.14.1+BER"; exit 1)
 
 .PHONY: lib
-lib: 
+lib:
 	cd lib && $(MAKE)
 
 .PHONY: clean
 clean::
 	cd lib && $(MAKE) clean
+
+.PHONY: install uninstall reinstall
+install:
+	cd lib && $(MAKE) install
+
+uninstall:
+	cd lib && $(MAKE) uninstall
+
+reinstall:
+	$(MAKE) uninstall
+	$(MAKE) install
 
 .PHONY: test
 test:

@@ -99,4 +99,17 @@ clean::
 clean::
 	cd $(BACKTRX) && rm -f *.cm[ixoa] *.cmxa *.[oa]
 
+.PHONY: install uninstall
+
+# TODO separate backends?
+install:
+	ocamlfind install strymonas META \
+		$(LIB) $(LIBOPT) \
+		$(BACKENDS:.cmo=.cmi) $(BACKENDS:.cmo=.cmx) \
+		$(OBJS:.cmo=.cmi) $(OBJS:.cmo=.cmx) \
+		backends.cmi backends.cmx
+
+uninstall:
+	ocamlfind remove strymonas
+
 -include depend
