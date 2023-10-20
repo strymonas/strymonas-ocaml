@@ -1,5 +1,6 @@
-version = "20230708"
+version = "2.1"
 description = "stream fusion, to completeness"
+requires = ""
 archive(byte) = "stream.cma"
 archive(native) = "stream.cmxa"
 plugin(byte) = "stream.cma"

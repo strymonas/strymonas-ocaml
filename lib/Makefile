@@ -103,7 +103,11 @@ clean::
 
 # TODO separate backends?
 install:
-	ocamlfind install strymonas META $(LIB) $(LIBOPT) $(INTF) $(BACKENDS:.cmo=.cmi) $(OBJSB:.cmo=.cmi) $(BACKENDS:.cmo=.cmx) $(OBJSB:.cmo=.cmx)
+	ocamlfind install strymonas META \
+		$(LIB) $(LIBOPT) \
+		$(BACKENDS:.cmo=.cmi) $(BACKENDS:.cmo=.cmx) \
+		$(OBJS:.cmo=.cmi) $(OBJS:.cmo=.cmx) \
+		backends.cmi backends.cmx
 
 uninstall:
 	ocamlfind remove strymonas
