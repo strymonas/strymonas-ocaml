@@ -1,0 +1,9 @@
+EXT meta
+S .
+S lib
+S lib/backends/C
+S lib/backends/Trx
+B .
+B lib
+B lib/backends/C
+B lib/backends/Trx
