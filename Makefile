@@ -1,4 +1,4 @@
-.PHONY: all 
+.PHONY: all
 all: check-compiler lib
 
 .PHONY: check-compiler
@@ -24,6 +24,17 @@ uninstall:
 reinstall:
 	$(MAKE) uninstall
 	$(MAKE) install
+
+.PHONY: install-pure uninstall-pure reinstall-pure
+install-pure:
+	cd lib && $(MAKE) install-pure
+
+uninstall-pure:
+	cd lib && $(MAKE) uninstall-pure
+
+reinstall-pure:
+	$(MAKE) uninstall-pure
+	$(MAKE) install-pure
 
 .PHONY: test
 test:

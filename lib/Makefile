@@ -28,7 +28,7 @@ BACKENDS=\
   $(BACKTRX)/trx_code_common.cmo
 
 # Order matters!
-INTF=cde.cmi cde_ex.cmi cde_top.cmi stream_raw.cmi stream_cooked.cmi 
+INTF=cde.cmi cde_ex.cmi cde_top.cmi stream_raw.cmi stream_cooked.cmi
 # OBJS are pure OCaml objects
 OBJS=pk_cde.cmo pk_coll.cmo stream_raw_fn.cmo stream_cooked_fn.cmo window_fn.cmo
 INCLUDES=-I $(BACKC) -I $(BACKTRX)
@@ -36,8 +36,8 @@ INCLUDES=-I $(BACKC) -I $(BACKTRX)
 .PHONY: all
 all: lib opt pure
 lib: $(LIB)
-opt: $(LIBOPT) $(LIBPUREOPT)
-pure: $(LIBPURE)
+opt: $(LIBOPT)
+pure: $(LIBPURE) $(LIBPUREOPT)
 
 .PHONY: intf			#Just the interfaces for testing examples
 intf: $(INTF)
@@ -49,10 +49,10 @@ $(LIBOPT): $(INTF) $(BACKENDS:.cmo=.cmx) $(OBJS:.cmo=.cmx) \
 	$(BACKTRX)/trx_code_native.cmx backends.cmx
 	$(OCAMLOPT) -a -o $@ $(filter-out %.cmi,$^)
 
-$(LIBPURE): $(INTF) $(BACKENDC) $(OBJS)
+$(LIBPURE): $(INTF) $(BACKENDC) $(OBJS) backends_pure.cmo
 	$(OCAMLC) -a -o $@ $(filter-out %.cmi,$^)
 
-$(LIBPUREOPT): $(INTF) $(BACKENDC:.cmo=.cmx) $(OBJS:.cmo=.cmx) 
+$(LIBPUREOPT): $(INTF) $(BACKENDC:.cmo=.cmx) $(OBJS:.cmo=.cmx) backends_pure.cmx
 	$(OCAMLOPT) -a -o $@ $(filter-out %.cmi,$^)
 
 
@@ -100,8 +100,6 @@ clean::
 	cd $(BACKTRX) && rm -f *.cm[ixoa] *.cmxa *.[oa]
 
 .PHONY: install uninstall
-
-# TODO separate backends?
 install:
 	ocamlfind install strymonas META \
 		$(LIB) $(LIBOPT) \
@@ -111,5 +109,19 @@ install:
 
 uninstall:
 	ocamlfind remove strymonas
+
+
+.PHONY: install-pure uninstall-pure
+install-pure: $(LIBPURE) $(LIBPUREOPT)
+	cp META.pure META
+	ocamlfind install strymonas-pure META \
+		$(LIBPURE) $(LIBPUREOPT) \
+		$(BACKENDC:.cmo=.cmi) $(BACKENDC:.cmo=.cmx) \
+		$(OBJS:.cmo=.cmi) $(OBJS:.cmo=.cmx) \
+		backends_pure.cmi backends_pure.cmx
+	cp META.default META
+
+uninstall-pure:
+	ocamlfind remove strymonas-pure
 
 -include depend

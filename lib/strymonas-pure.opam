@@ -1,0 +1,29 @@
+
+opam-version: "2.0"
+name: "strymonas-pure"
+version: "2.1.1"
+synopsis: "Stream fusion, to completeness"
+maintainer: "tomoaki.kobayashi.t3@alumni.tohoku.ac.jp"
+authors: [
+  "Oleg Kiselyov"
+  "Tomoaki Kobayashi"
+  "Aggelos Biboudis"
+  "Nick Palladinos"
+  "Yannis Smaragdakis"
+]
+license: "MIT"
+homepage: "https://strymonas.github.io/"
+bug-reports: "https://github.com/strymonas/strymonas-ocaml/issues"
+dev-repo: "git+https://github.com/strymonas/strymonas-ocaml.git"
+depends: [
+  "ocaml" {>= "4.14.1"}
+  "ocamlfind" {build}
+]
+build: [
+  [make "pure"]
+]
+install:[make "install-pure"]
+remove:[make "uninstall-pure"]
+url {
+  src: "https://github.com/strymonas/strymonas-ocaml/tree/main/lib"
+}

@@ -1,0 +1,7 @@
+version = "2.1.1"
+description = "stream fusion, to completeness"
+requires = ""
+archive(byte) = "stream_ocaml.cma"
+archive(native) = "stream_ocaml.cmxa"
+plugin(byte) = "stream_ocaml.cma"
+#plugin(native) = "stream_ocaml.cmxs"
