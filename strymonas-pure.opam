@@ -20,7 +20,8 @@ depends: [
   "ocamlfind" {build}
 ]
 build: [
-  [make "-C" "lib/" "depend-pure" "pure"]
+  [make "-C" "lib/" "depend-pure"]
+  [make "-C" "lib/" "pure"]
 ]
 install:[make "-C" "lib/" "install-pure"]
 remove:[make "-C" "lib/" "uninstall-pure"]
