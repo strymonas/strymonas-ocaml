@@ -90,6 +90,10 @@ backends.cmx: backends.ml
 depend: $(wildcard *.mli *.ml $(BACKC)/*.{ml,mli} $(BACKTRX)/*.{ml,mli})
 	$(OCAMLDEP) $(INCLUDES) $^ > depend
 
+depend-pure: $(filter-out backends.ml, $(wildcard *.mli *.ml $(BACKC)/*.{ml,mli} $(BACKTRX)/*.{ml,mli}))
+	echo $^
+	$(OCAMLDEP) $(INCLUDES) $^ > depend
+
 clean::
 	rm -f *.cm[ixoa] *.cmxa *.[oa] depend
 

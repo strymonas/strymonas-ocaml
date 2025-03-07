@@ -20,10 +20,10 @@ depends: [
   "ocamlfind" {build}
 ]
 build: [
-  [make "pure"]
+  [make "-C" "lib/" "depend-pure" "pure"]
 ]
-install:[make "install-pure"]
-remove:[make "uninstall-pure"]
+install:[make "-C" "lib/" "install-pure"]
+remove:[make "-C" "lib/" "uninstall-pure"]
 url {
   src: "https://github.com/strymonas/strymonas-ocaml/tree/main/lib"
 }
