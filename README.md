@@ -14,6 +14,9 @@ $ opam switch create 4.14.1
 $ eval $(opam env --switch=4.14.1)
 $ opam install strymonas-pure
 $ rlwrap ocaml
+```
+
+```ocaml
 #require "strymonas-pure";;
 module C = Backends_pure.C;;
 module C32 = C.C32;;
