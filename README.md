@@ -1,8 +1,8 @@
 # strymonas-ocaml
-Strymonas is a code-generation–based library (embedded DSL) for fast, bulk, single-thread in-memory stream processing. This repository focuses on strymonas for OCaml and BER MetaOCaml, which generates C and OCaml code.
 
-Check https://strymonas.github.io/ for the latest situation of the project.
+Strymonas is a code-generation–based library (embedded DSL) for fast, bulk, single-thread in-memory stream processing.
 
+See https://strymonas.github.io/ for the latest status of the project.
 
 ## Installing
 
@@ -42,28 +42,28 @@ let _ = C.run pipeline;;
 ```
 
 ## Building
-There are several options depending on your purpose. Especially, the easiest way is as follows:
-```
+
+Building from source gives you the full strymonas, including the MetaOCaml-based backend:
+```bash
 $ opam switch create 4.14.1+BER
 $ eval $(opam env)
 $ make lib
 $ make test
 ```
 
-You can see [lib/0README.dr](lib/0README.dr) before exploring the source code to deepen your understandings of the library design.
-
+You can read [lib/0README.dr](lib/0README.dr) before exploring the source code to deepen your understanding of the library design.
 
 ## Example
-There are many examples (and some of them include benchmarks as mentioned below):
-- [examples/TryFirst](examples/TryFirst): literally, "TryFirst"!
-- [examples/sliding-window](examples/sliding-window): a base of [lib/window_fn.ml](lib/window_fn.ml)
+
+There are many examples (some of which also include benchmarks):
+- [examples/TryFirst](examples/TryFirst): the first thing to try, as the name says!
+- [examples/sliding-window](examples/sliding-window): the basis for [lib/window_fn.ml](lib/window_fn.ml)
 - [examples/amradio](examples/amradio): an SDR application
 - [examples/streamit-fm](examples/streamit-fm): an SDR benchmark/application related to [StreamIt](https://groups.csail.mit.edu/cag/streamit/)
 - [examples/gnuradio-fm](examples/gnuradio-fm): an SDR benchmark/application related to [GNU Radio](https://www.gnuradio.org/) with [HackRF One](https://greatscottgadgets.com/hackrf/one/)
 
 ## Benchmarking
-Micro-benchmarks are in [benchmarks](benchmarks). See [benchmarks/README.md](benchmarks/README.md) for more details.
 
-There are also macro-benchmarks. They can be found in the following directories (see the relevant README.md files for more details):
-- [examples/streamit-fm](examples/streamit-fm)
-- [examples/gnuradio-fm](examples/gnuradio-fm)
+There are two kinds of benchmarks:
+- **Micro-benchmarks** in [benchmarks](benchmarks).
+- **Macro-benchmarks**: the SDR applications in [examples/streamit-fm](examples/streamit-fm) and [examples/gnuradio-fm](examples/gnuradio-fm).

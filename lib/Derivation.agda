@@ -1,14 +1,13 @@
-{-# OPTIONS --without-K --guardedness  --safe  #-}
+{-# OPTIONS --without-K --guardedness --sized-types #-}
 
 module Derivation where
 
 {-
-  We formalize the following parts from derivation.ml
-  1) The basic interface of stream operations "stream2".
-  2) The type of the stateful stream "ststream".
-  3) An implementation of the stateful stream "ststream" that follows the interface defined in "stream2".
-  4) Types for Strong-Weak bisimulations and provide proofs that they form an equivalence relation.
-  5) Proofs for all the specified equation laws among streams.
+  This module defines:
+  1) The basic interface of stateful stream operations.
+  2) Stateful streams and their concrete stream operations.
+  3) Strong and weak bisimulations, with equivalence proofs.
+  4) Equational proofs for the stream operations.
 -}
 
 open import Relation.Binary.PropositionalEquality
@@ -24,6 +23,7 @@ open import Data.Fin using (Fin; zero; suc)
 open import Data.Maybe using (Maybe; just; nothing)
 open import Data.Empty using (⊥; ⊥-elim)
 open import Data.Unit using (⊤; tt)
+open import Agda.Builtin.Size using (Size; Size<_)
 
 
 record Stream₂ : Set₁ where
@@ -295,6 +295,82 @@ module _ where
   IsEquivalence.refl (Setoid.isEquivalence (setoidStStream≈ A Z)) = refl≈
   IsEquivalence.sym (Setoid.isEquivalence (setoidStStream≈ A Z)) = sym≈
   IsEquivalence.trans (Setoid.isEquivalence (setoidStStream≈ A Z)) = trans≈
+
+appendSkip≈ : ∀ {A Z : Set} (z : Z) (tl : Z → StStream A Z) → StStream≈ (tl z) (mkStream (cons (nothing , z) tl))
+StStream≈.stream (appendSkip≈ z tl) = local z tl
+  where
+    local : ∀ {A Z : Set} (z : Z) (tl : Z → StStream A Z) → StStreamWEq A Z (StStream.stream (tl z)) (cons (nothing , z) tl)
+    local z tl with StStream.stream (tl z) | inspect StStream.stream (tl z)
+    local z tl | nil | [ prf ] = eqnilskip local'
+      where
+        local' : StStream≈ (mkStream nil) (tl z)
+        StStream≈.stream local' rewrite prf = eqnil
+    local z tl | cons (just x , z') tl' | [ prf ] = eqconsskip local'
+      where
+        local' : StStreamWEq _ _ (cons (just x , z') tl') (StStream.stream (tl z))
+        local' rewrite prf = eqcons refl refl≈
+    local z tl | cons (nothing , z') tl' | [ prf ] = eqskip local'
+      where
+        local' : StStream≈ (tl' z') (tl z)
+        StStream≈.stream local' rewrite prf = local z' tl'
+
+prependSkip≈ : ∀ {A Z : Set} (z : Z) (tl : Z → StStream A Z) (st : StStream A Z) →
+               StStream≈ (tl z) st → StStream≈ (mkStream (cons (nothing , z) tl)) st
+prependSkip≈ z tl st eq = trans≈ (sym≈ (appendSkip≈ z tl)) eq
+
+mutual
+  -- The one-sided nil lemmas keep the recursive calls guarded by weak
+  -- bisimulation constructors instead of hiding them under trans≈.
+  abstract≈ : ∀ {A Zp Z : Set} {st st' : StStream A (Zp × Z)} →
+               StStream≈ st st' → StStream≈ (StStreamFunctions.abstractSt st) (StStreamFunctions.abstractSt st')
+  StStream≈.stream (abstract≈ eq) = abstract≈F (StStream≈.stream eq)
+
+  abstractNilRight≈ : ∀ {A Zp Z : Set} {st : StStream A (Zp × Z)} →
+                      StStream≈ st (mkStream nil) →
+                      StStream≈ (StStreamFunctions.abstractSt st) (mkStream nil)
+  StStream≈.stream (abstractNilRight≈ eq) = abstractNilRight≈F (StStream≈.stream eq)
+
+  abstractNilLeft≈ : ∀ {A Zp Z : Set} {st : StStream A (Zp × Z)} →
+                     StStream≈ (mkStream nil) st →
+                     StStream≈ (mkStream nil) (StStreamFunctions.abstractSt st)
+  StStream≈.stream (abstractNilLeft≈ eq) = abstractNilLeft≈F (StStream≈.stream eq)
+
+  abstract≈F : ∀ {A Zp Z : Set} {s s' : StStreamF A (Zp × Z)} →
+               StStreamWEq A (Zp × Z) s s' →
+               StStreamWEq A Z
+                 (StStream.stream (StStreamFunctions.abstractSt (mkStream s)))
+                 (StStream.stream (StStreamFunctions.abstractSt (mkStream s')))
+  abstract≈F eqnil = eqnil
+  abstract≈F (eqskip {z₁ = zp₁ , z₁} {z₂ = zp₂ , z₂} eq) =
+    eqskip (abstract≈ eq)
+  abstract≈F (eqcons refl {z₁ = zp₁ , z₁} {z₂ = zp₂ , z₂} eq) =
+    eqcons refl (abstract≈ eq)
+  abstract≈F (eqskipnil {z₁ = zp₁ , z₁} eq) =
+    eqskipnil (abstractNilRight≈ eq)
+  abstract≈F (eqnilskip {z₂ = zp₂ , z₂} eq) =
+    eqnilskip (abstractNilLeft≈ eq)
+  abstract≈F (eqskipcons {z₁ = zp₁ , z₁} {z₂ = zp₂ , z₂} eq) =
+    eqskipcons (abstract≈F eq)
+  abstract≈F (eqconsskip {z₁ = zp₁ , z₁} {z₂ = zp₂ , z₂} eq) =
+    eqconsskip (abstract≈F eq)
+
+  abstractNilRight≈F : ∀ {A Zp Z : Set} {s : StStreamF A (Zp × Z)} →
+                       StStreamWEq A (Zp × Z) s nil →
+                       StStreamWEq A Z
+                         (StStream.stream (StStreamFunctions.abstractSt (mkStream s)))
+                         nil
+  abstractNilRight≈F eqnil = eqnil
+  abstractNilRight≈F (eqskipnil {z₁ = zp₁ , z₁} eq) =
+    eqskipnil (abstractNilRight≈ eq)
+
+  abstractNilLeft≈F : ∀ {A Zp Z : Set} {s : StStreamF A (Zp × Z)} →
+                      StStreamWEq A (Zp × Z) nil s →
+                      StStreamWEq A Z
+                        nil
+                        (StStream.stream (StStreamFunctions.abstractSt (mkStream s)))
+  abstractNilLeft≈F eqnil = eqnil
+  abstractNilLeft≈F (eqnilskip {z₂ = zp₂ , z₂} eq) =
+    eqnilskip (abstractNilLeft≈ eq)
 
 -- examples
 module _ {A Z : Set} where
@@ -828,23 +904,66 @@ module _ where
       StStream≅.stream (zipUnrollUnrollExt z₁ z₂) | nothing , z₁' | [ prf ] | just b , z₂'  | [ prf' ] = eqskip (lemma' z₁' z₂ z₂' b [ prf' ])
       StStream≅.stream (zipUnrollUnrollExt z₁ z₂) | nothing , z₁' | [ prf ] | nothing , z₂' | [ prf' ] = eqskip (zipUnrollUnrollExt z₁' z₂')
   
-  module _ {A Z : Set} (step : Z → Maybe A × Z) (pred : Z → Bool) (side : (z : Z) → step z |> λ { (just x , z') → ⊤ ; (nothing , z') → pred z' |> λ { false → ⊤ ; true → ⊥ } })  where
+  module _ {A Z : Set} (step step' : Z → Maybe A × Z) (pred : Z → Bool) where
+
+    mutual
+      -- noSkipStep records finite skip chains. noSkipJust records a visible
+      -- step and carries the coinductive continuation at a smaller hidden size.
+      record NoSkip (z : Z) {i : Size} : Set where
+        constructor mkNoSkip
+        coinductive
+        field
+          noSkipForce : NoSkipF z {i}
+
+      data NoSkipF (z : Z) {i : Size} : Set where
+        noSkipJust : (a : A) (z' : Z) →
+                     step z ≡ (just a , z') →
+                     pred z' ≡ true →
+                     step' z ≡ (just a , z') →
+                     {j : Size< i} →
+                     NoSkip z' {j} →
+                     NoSkipF z {i}
+        noSkipJustStop : (a : A) (z' : Z) →
+                         step z ≡ (just a , z') →
+                         pred z' ≡ false →
+                         step' z ≡ (just a , z') →
+                         NoSkipF z {i}
+        noSkipStop : (z' : Z) →
+                     step z ≡ (nothing , z') →
+                     pred z' ≡ false →
+                     step' z ≡ (nothing , z') →
+                     NoSkipF z {i}
+        noSkipStep : (z' : Z) →
+                     step z ≡ (nothing , z') →
+                     pred z' ≡ true →
+                     step' z ≡ step' z' →
+                     NoSkipF z' {i} →
+                     NoSkipF z {i}
+
     private
-      step' : Z → Maybe A × Z
-      step' z with side z
-      step' z | c with step z
-      step' z | tt | just a , z' = just a , z'
-      step' z | c | nothing , z' with pred z'
-      step' z | tt | nothing , z' | false = nothing , z'
-      
-    unrollLinear : ∀ (z : Z) → StStream≅ (unroll step z |> guard pred) (unroll step' z |> guard pred)
-    StStream≅.stream (unrollLinear z) with side z
-    StStream≅.stream (unrollLinear z) | c with step z
-    StStream≅.stream (unrollLinear z) | c | just a , z' with pred z'
-    StStream≅.stream (unrollLinear z) | c | just a , z' | false = eqnil
-    StStream≅.stream (unrollLinear z) | c | just a , z' | true = eqcons refl (unrollLinear z')
-    StStream≅.stream (unrollLinear z) | c | nothing , z' with pred z' | inspect pred z'
-    StStream≅.stream (unrollLinear z) | c | nothing , z' | false | [ prf ] rewrite prf = eqnil
+      L : Z → StStream A Z
+      L z = unroll step z |> guard pred
+
+      R : Z → StStream A Z
+      R z = unroll step' z |> guard pred
+
+    mutual
+      unrollLinear : ∀ {i : Size} (z : Z) → NoSkip z {i} → StStream≈ (L z) (R z)
+      StStream≈.stream (unrollLinear z ns) = unrollLinearF z (NoSkip.noSkipForce ns)
+
+      unrollLinearF : ∀ {i : Size} (z : Z) → NoSkipF z {i} →
+                      StStreamWEq A Z (StStream.stream (L z)) (StStream.stream (R z))
+      unrollLinearF z (noSkipJust a z' eqstep eqpred eqstep' ns') rewrite eqstep rewrite eqstep' rewrite eqpred =
+        eqcons refl (unrollLinear z' ns')
+      unrollLinearF z (noSkipJustStop a z' eqstep eqpred eqstep') rewrite eqstep rewrite eqstep' rewrite eqpred =
+        eqnil
+      unrollLinearF z (noSkipStop z' eqstep eqpred eqstep') rewrite eqstep rewrite eqstep' rewrite eqpred =
+        eqnil
+      unrollLinearF z (noSkipStep z' eqstep eqpred eqstep' ns') rewrite eqstep rewrite eqstep' rewrite eqpred =
+        StStream≈.stream (prependSkip≈ z' (λ z₁ → L z₁) (R z') local)
+        where
+          local : StStream≈ (L z') (R z')
+          StStream≈.stream local = unrollLinearF z' ns'
 
   module _ {A B Z₁ Z₂ : Set} (step₁ : Z₁ → Maybe A × Z₁) (side : (z₁ : Z₁) → step₁ z₁ |> λ { (just a , z₁') → ⊤ ; (nothing , z₁') → ⊥ }) where
     private
@@ -947,124 +1066,187 @@ module _ where
     StStream≅.stream (zipGuard st₁ st₂) | cons (nothing , z₁) tl₁ | true | [ prf ] | cons (just b , z₂) tl₂ rewrite prf = eqskip (zipGuard (tl₁ z₁) st₂)
     StStream≅.stream (zipGuard st₁ st₂) | cons (nothing , z₁) tl₁ | true | [ prf ] | cons (nothing , z₂) tl₂ rewrite prf = eqskip (zipGuard (tl₁ z₁) (tl₂ z₂))
 
-  module _ {A B Z Zp : Set} (step : Z → Maybe A × Z) (pred : Z → Bool) (stepi : Z → A → (Zp × Z) → Maybe B × (Zp × Z)) (zi : Z → A → Zp × Z) (predi : Z → A → (Zp × Z) → Bool)
-                            (side₁ : (z : Z) → step z |> λ { (just x , z') → ⊤ ; (nothing , z') → pred z' |> λ { false → ⊤ ; true → ⊥ } })
-                            (side₂ : (x : A) (z₀ : Z) (z : Zp × Z) → stepi z₀ x z |> λ { (just x , z') → ⊤ ; (nothing , z') → predi z₀ x z' |> λ { false → ⊤ ; true → ⊥ } }) where
+  -- Nested linearization.
+  --
+  -- flatmapLinearRaw relates the source pipeline to a ping-pong state machine
+  -- that alternates between the outer unroll and the current inner unroll while
+  -- keeping explicit skips. flatmapLinearWithTrailingGuard then collapses finite
+  -- skip chains using NoSkip evidence.
+  --
+  -- flatmapLinear removes the trailing source guard under innerPreservesPred:
+  -- whenever the outer guard holds for the item-producing outer state and the
+  -- inner guard holds for an inner state, the visible component of that inner
+  -- state also satisfies the outer guard.
+  --
+  -- In stepRaw, an inner guard failure resumes the outer stream from the last
+  -- accepted visible state, because nil carries no terminal state.
+  module _ {A B Z Zp : Set}
+    (step : Z → Maybe A × Z)
+    (pred : Z → Bool)
+    (stepi : Z → A → (Zp × Z) → Maybe B × (Zp × Z))
+    (zi : Z → A → Zp × Z)
+    (predi : Z → A → (Zp × Z) → Bool) where
+
     private
-      Stepix : Z → A → Set
-      Stepix z a = Σ ((Zp × Z) → Maybe B × (Zp × Z)) (λ stepix → stepix ≡ (λ zn → stepi z a zn))
-      
-      Predix : Z → A → Set
-      Predix z a = Σ ((Zp × Z) → Bool) (λ predix → predix ≡ (λ zn → predi z a zn))
+      State : Set
+      State = Maybe (A × Z × Zp × Z) × Z
 
-      Stepi×Predi : Set
-      Stepi×Predi = Σ (Z × A) λ { (z , a) → Stepix z a × Predix z a }
-      
-      step' : Maybe (Stepi×Predi × Zp × Z) × Z → Maybe B × Maybe (Stepi×Predi ×  Zp × Z) × Z
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) with side₂ a zc (zp , z)
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) | c rewrite (sym stepeq) with stepix (zp , z) 
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) | c  | just y , zp' , z' rewrite (sym predeq) with predix (zp' , z') 
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) | tt | just y , zp' , z' | false = (nothing , (nothing  , z₀))
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) | tt | just y , zp' , z' | true = just y , (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp' , z'))) , z' 
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) | c  | nothing , zp' , z' rewrite (sym predeq) with predix (zp' , z') 
-      step' (just (((zc , a) , (stepix , stepeq) , (predix , predeq)) , (zp , z)) , z₀) | tt | nothing , zp' , z' | false =  nothing , (nothing  , z₀)
-      step' (just (((zc , a) , (stepix , stepeq) , predix , predeq) , zp , z) , z₀) | () | nothing , zp' , z' | true
-      step' (nothing , z) with side₁ z
-      step' (nothing , z) | c with step z 
-      step' (nothing , z) | c | just x , z' with pred z'
-      step' (nothing , z) | c | just x , z' | false = (nothing , (nothing , z'))
-      step' (nothing , z) | c | just x , z' | true  = let stepix = (λ zn → stepi z' x zn) in
-                                                      let predix = (λ zn → predi z' x zn) in
-                                                      let (zp , z'') = zi z' x in
-                                                      nothing , ((just (((z' , x) , ((stepix , refl) , predix , refl)) , zp , z'')) , z')
-      step' (nothing , z) | c | nothing , z' with pred z' 
-      step' (nothing , z) | c | nothing , z' | false = (nothing , (nothing , z')) 
-      step' (nothing , z) | () | nothing , z' | true
+      statePred : State → Bool
+      statePred (_ , z) = pred z
 
+      innerFrom : Z → A → Zp × Z → StStream B Z
+      innerFrom z x zpi = unroll (stepi z x) zpi |> guard (predi z x) |> abstractSt
+
+      inner : Z → A → StStream B Z
+      inner z x = innerFrom z x (zi z x)
+
+      outer : Z → StStream A Z
+      outer z = unroll step z |> guard pred
+
+      stepRaw : State → Maybe B × State
+      stepRaw (nothing , z) with step z
+      stepRaw (nothing , z) | just x , z' with pred z'
+      stepRaw (nothing , z) | just x , z' | false = nothing , (nothing , z')
+      stepRaw (nothing , z) | just x , z' | true with zi z' x
+      stepRaw (nothing , z) | just x , z' | true | zp , zi' =
+        nothing , (just (x , z' , zp , zi') , z')
+      stepRaw (nothing , z) | nothing , z' = nothing , (nothing , z')
+      stepRaw (just (x , z₀ , zp , zi') , z) with stepi z₀ x (zp , zi')
+      stepRaw (just (x , z₀ , zp , zi') , z) | just y , zp' , z' with predi z₀ x (zp' , z')
+      stepRaw (just (x , z₀ , zp , zi') , z) | just y , zp' , z' | false =
+        nothing , (nothing , z)
+      stepRaw (just (x , z₀ , zp , zi') , z) | just y , zp' , z' | true =
+        just y , (just (x , z₀ , zp' , z') , z')
+      stepRaw (just (x , z₀ , zp , zi') , z) | nothing , zp' , z' with predi z₀ x (zp' , z')
+      stepRaw (just (x , z₀ , zp , zi') , z) | nothing , zp' , z' | false =
+        nothing , (nothing , z)
+      stepRaw (just (x , z₀ , zp , zi') , z) | nothing , zp' , z' | true =
+        nothing , (just (x , z₀ , zp' , z') , z')
+
+      raw : State → StStream B Z
+      raw s = unroll stepRaw s |> guard statePred |> abstractSt
 
     mutual
-      flatmapLinear₁Lemma : ∀ (z₀ : Z) (x : A) (z : Z) ((zp' , z') : Zp × Z) →
-                   StStream≅ (guard pred (StStreamFunctions.flatmapInnerSt (λ z₁ x₁ → abstractSt (guard (predi z₁ x₁) (unroll (stepi z₁ x₁) (zi z₁ x₁)))) z
-                                                               (λ z₁ → guard pred (unroll step z₁))
-                                                               (abstractSt (guard (predi z₀ x) (unroll (stepi z₀ x) (zp' , z'))))))
-                             (abstractSt (guard (λ { (_ , z) → pred z }) (unroll step' (just (((z₀ , x) , (stepi z₀ x , refl) , (predi z₀ x , refl)) , (zp' , z')) , z))))
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) with side₂ x z₀ (zp' , z')
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c with stepi z₀ x (zp' , z')
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' with predi z₀ x (zp'' , z'')
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' | false with pred z
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' | false | false = eqnil
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' | false | true = eqskip (flatmapLinear₁ z)
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' | true with pred z''
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' | true | false = eqnil
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | just b , zp'' , z'' | true | true = eqcons refl (flatmapLinear₁Lemma z₀ x z'' (zp'' , z''))
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | nothing , zp'' , z'' with predi z₀ x (zp'' , z'')
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | nothing , zp'' , z'' | false with pred z
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | nothing , zp'' , z'' | false | false = eqnil
-      StStream≅.stream (flatmapLinear₁Lemma z₀ x z (zp' , z')) | c | nothing , zp'' , z'' | false | true = eqskip (flatmapLinear₁ z)
-     
-      flatmapLinear₁ : ∀ (z : Z) → StStream≅ (unroll step z |> guard pred |> flatmapSt (λ z x → unroll (stepi z x) (zi z x) |> guard (predi z x) |> abstractSt) |> guard (λ { z → pred z }))
-                                             (unroll step' (nothing , z) |> guard (λ { (_ , z) → pred z }) |> abstractSt)
-      StStream≅.stream (flatmapLinear₁ z) with side₁ z
-      StStream≅.stream (flatmapLinear₁ z) | c with step z
-      StStream≅.stream (flatmapLinear₁ z) | c | just x , z' with pred z' | inspect pred z'
-      StStream≅.stream (flatmapLinear₁ z) | c | just x , z' | false | [ prf ] rewrite prf = eqnil
-      StStream≅.stream (flatmapLinear₁ z) | c | just x , z' | true  | [ prf ] rewrite prf = eqskip (flatmapLinear₁Lemma z' x z' (zi z' x))
-      StStream≅.stream (flatmapLinear₁ z) | c | nothing , z' with pred z' | inspect pred z'
-      StStream≅.stream (flatmapLinear₁ z) | c | nothing , z' | false | [ prf ] rewrite prf = eqnil
-      StStream≅.stream (flatmapLinear₁ z) | () | nothing , z' | true | [ prf ]
+      flatmapLinearRawInner : ∀ (z₀ : Z) (x : A) (z : Z) (zp : Zp) (zi' : Z) →
+        StStream≈
+          (StStreamFunctions.flatmapInnerSt inner z outer (innerFrom z₀ x (zp , zi')) |> guard pred)
+          (raw (just (x , z₀ , zp , zi') , z))
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') with stepi z₀ x (zp , zi')
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' with predi z₀ x (zp' , z') | inspect (predi z₀ x) (zp' , z')
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' | false | [ eqpredi ] with pred z
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' | false | [ eqpredi ] | false rewrite eqpredi = eqnil
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' | false | [ eqpredi ] | true rewrite eqpredi = eqskip (flatmapLinearRaw z)
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' | true | [ eqpredi ] with pred z' | inspect pred z'
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' | true | [ eqpredi ] | false | [ eqpred ] rewrite eqpredi rewrite eqpred = eqnil
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | just y , zp' , z' | true | [ eqpredi ] | true | [ eqpred ] rewrite eqpredi rewrite eqpred =
+        eqcons refl (flatmapLinearRawInner z₀ x z' zp' z')
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' with predi z₀ x (zp' , z') | inspect (predi z₀ x) (zp' , z')
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' | false | [ eqpredi ] with pred z
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' | false | [ eqpredi ] | false rewrite eqpredi = eqnil
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' | false | [ eqpredi ] | true rewrite eqpredi = eqskip (flatmapLinearRaw z)
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' | true | [ eqpredi ] with pred z' | inspect pred z'
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' | true | [ eqpredi ] | false | [ eqpred ] rewrite eqpredi rewrite eqpred = eqnil
+      StStream≈.stream (flatmapLinearRawInner z₀ x z zp zi') | nothing , zp' , z' | true | [ eqpredi ] | true | [ eqpred ] rewrite eqpredi rewrite eqpred =
+        eqskip (flatmapLinearRawInner z₀ x z' zp' z')
 
-  module _ {A B Z Zp : Set} (step : Z → Maybe A × Z) (pred : Z → Bool) (stepi : Z → A → (Zp × Z) → Maybe B × (Zp × Z)) (zi : Z → A → Zp × Z) (predi : Z → A → (Zp × Z) → Bool)
-                            (side₁ : (z : Z) → step z |> λ { (just x , z') → ⊤ ; (nothing , z') → pred z' |> λ { false → ⊤ ; true → ⊥ } })
-                            (side₂ : (x : A) (z₀ : Z) (z : Zp × Z) → stepi z₀ x z |> λ { (just x , z') → ⊤ ; (nothing , z') → predi z₀ x z' |> λ { false → ⊤ ; true → ⊥ } }) where
-    private
-      step' : Maybe (A × Z × Zp × Z) × Z → Maybe B × Maybe (A × Z × Zp × Z) × Z
-      step' (just (a , z₀ , zp , z) , z₀') with side₂ a z₀ (zp , z)
-      step' (just (a , z₀ , zp , z) , z₀') | c with stepi z₀ a (zp , z)
-      step' (just (a , z₀ , zp , z) , z₀') | c | just b , (zp' , z') with predi z₀ a (zp' , z')
-      step' (just (a , z₀ , zp , z) , z₀') | c | just b , zp' , z' | false = (nothing , (nothing  , z₀'))
-      step' (just (a , z₀ , zp , z) , z₀') | c | just b , zp' , z' | true = (just b) , ((just (a , (z₀ , (zp' , z')))) , z')
-      step' (just (a , z₀ , zp , z) , z₀') | c | nothing , (zp' , z') with predi z₀ a (zp' , z')
-      step' (just (a , z₀ , zp , z) , z₀') | c | nothing , zp' , z' | false = nothing , (nothing  , z₀')
-      step' (nothing , z) with side₁ z
-      step' (nothing , z) | c with step z 
-      step' (nothing , z) | c | just x , z' with pred z'
-      step' (nothing , z) | c | just x , z' | false = (nothing , (nothing , z'))
-      step' (nothing , z) | c | just x , z' | true  = let (zp , z'') = zi z' x in
-                                                      nothing , (just (x , (z' , (zp , z'')))  , z')
-      step' (nothing , z) | c  | nothing , z' with pred z' 
-      step' (nothing , z) | c  | nothing , z' | false = (nothing , (nothing , z')) 
-      step' (nothing , z) | () | nothing , z' | true
+      flatmapLinearRawInnerStart : ∀ (z₀ : Z) (x : A) (z : Z) →
+        StStream≈
+          (StStreamFunctions.flatmapInnerSt inner z outer (inner z₀ x) |> guard pred)
+          (raw (let zpi = zi z₀ x in just (x , z₀ , proj₁ zpi , proj₂ zpi) , z))
+      flatmapLinearRawInnerStart z₀ x z with zi z₀ x
+      flatmapLinearRawInnerStart z₀ x z | zp , zi' =
+        flatmapLinearRawInner z₀ x z zp zi'
 
-    mutual
-      flatmapLinear₂Lemma : ∀ (z₀ : Z) (a : A) (z : Z) ((zp' , z') : Zp × Z) →
-                   StStream≅ (guard pred (StStreamFunctions.flatmapInnerSt (λ z₁ x₁ → abstractSt (guard (predi z₁ x₁) (unroll (stepi z₁ x₁) (zi z₁ x₁)))) z
-                                                               (λ z₁ → guard pred (unroll step z₁))
-                                                               (abstractSt (guard (predi z₀ a) (unroll (stepi z₀ a) (zp' , z'))))))
-                             (abstractSt (guard (λ { (_ , z) → pred z }) (unroll step' (just (a , z₀ , zp' , z') , z))))
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) with side₂ a z₀ (zp' , z')
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c with stepi z₀ a (zp' , z')
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' with predi z₀ a (zp'' , z'')
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' | false with pred z
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' | false | false = eqnil
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' | false | true = eqskip (flatmapLinear₂ z)
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' | true with pred z''
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' | true | false = eqnil
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | just b , zp'' , z'' | true | true = eqcons refl (flatmapLinear₂Lemma z₀ a z'' (zp'' , z''))
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | nothing , zp'' , z'' with predi z₀ a (zp'' , z'')
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | nothing , zp'' , z'' | false with pred z
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | nothing , zp'' , z'' | false | false = eqnil
-      StStream≅.stream (flatmapLinear₂Lemma z₀ a z (zp' , z')) | c | nothing , zp'' , z'' | false | true = eqskip (flatmapLinear₂ z)
+      flatmapLinearRaw : ∀ (z : Z) →
+        StStream≈
+          (unroll step z |> guard pred |> flatmapSt inner |> guard pred)
+          (raw (nothing , z))
+      StStream≈.stream (flatmapLinearRaw z) with step z
+      StStream≈.stream (flatmapLinearRaw z) | just x , z' with pred z' | inspect pred z'
+      StStream≈.stream (flatmapLinearRaw z) | just x , z' | false | [ eqpred ] rewrite eqpred = eqnil
+      StStream≈.stream (flatmapLinearRaw z) | just x , z' | true | [ eqpred ] with zi z' x | inspect (zi z') x
+      StStream≈.stream (flatmapLinearRaw z) | just x , z' | true | [ eqpred ] | zp , zi' | [ eqzi ] rewrite eqpred rewrite sym eqzi =
+        eqskip (flatmapLinearRawInnerStart z' x z')
+      StStream≈.stream (flatmapLinearRaw z) | nothing , z' with pred z' | inspect pred z'
+      StStream≈.stream (flatmapLinearRaw z) | nothing , z' | false | [ eqpred ] rewrite eqpred = eqnil
+      StStream≈.stream (flatmapLinearRaw z) | nothing , z' | true | [ eqpred ] rewrite eqpred =
+        eqskip (flatmapLinearRaw z')
 
+    module _
+      (innerPreservesPred :
+        (z₀ : Z) (x : A) (zpi : Zp × Z) →
+        pred z₀ ≡ true →
+        predi z₀ x zpi ≡ true →
+        pred (proj₂ zpi) ≡ true)
+      where
 
-      flatmapLinear₂ : ∀ (z : Z) → StStream≅ (unroll step z |> guard pred |> flatmapSt (λ z x → unroll (stepi z x) (zi z x) |> guard (predi z x) |> abstractSt) |> guard (λ { z → pred z }))
-                                             (unroll step' (nothing , z) |> guard (λ { (_ , z) → pred z }) |> abstractSt)
-      StStream≅.stream (flatmapLinear₂ z) with side₁ z
-      StStream≅.stream (flatmapLinear₂ z) | c with step z
-      StStream≅.stream (flatmapLinear₂ z) | c | just a , z' with pred z' | inspect pred z'
-      StStream≅.stream (flatmapLinear₂ z) | c | just a , z' | false | [ prf ] rewrite prf = eqnil
-      StStream≅.stream (flatmapLinear₂ z) | c | just a , z' | true | [ prf ] rewrite prf = eqskip (flatmapLinear₂Lemma z' a z' (zi z' a))
-      StStream≅.stream (flatmapLinear₂ z) | c | nothing , z' with pred z' | inspect pred z'
-      StStream≅.stream (flatmapLinear₂ z) | c | nothing , z' | false | [ prf ] rewrite prf = eqnil
-      
+      -- This is Defn. side-cond (iii) specialized to the unroll/guard form of
+      -- the inner stream.  It justifies inserting the trailing guard that the
+      -- linearized state machine already has.
+      mutual
+        flatmapTrailingGuardStableInner : ∀ (z₀ : Z) (x : A) (z : Z) (zp : Zp) (zi' : Z) →
+          pred z₀ ≡ true →
+          pred z ≡ true →
+          StStream≈
+            (StStreamFunctions.flatmapInnerSt inner z outer (innerFrom z₀ x (zp , zi')))
+            (StStreamFunctions.flatmapInnerSt inner z outer (innerFrom z₀ x (zp , zi')) |> guard pred)
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) with stepi z₀ x (zp , zi')
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) | just y , zp' , z' with predi z₀ x (zp' , z') | inspect (predi z₀ x) (zp' , z')
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) | just y , zp' , z' | false | [ eqpredi ] rewrite eqpredi rewrite predz =
+          eqskip (flatmapTrailingGuardStable z)
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) | just y , zp' , z' | true | [ eqpredi ] rewrite eqpredi rewrite innerPreservesPred z₀ x (zp' , z') predz₀ eqpredi =
+          eqcons refl (flatmapTrailingGuardStableInner z₀ x z' zp' z' predz₀ (innerPreservesPred z₀ x (zp' , z') predz₀ eqpredi))
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) | nothing , zp' , z' with predi z₀ x (zp' , z') | inspect (predi z₀ x) (zp' , z')
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) | nothing , zp' , z' | false | [ eqpredi ] rewrite eqpredi rewrite predz =
+          eqskip (flatmapTrailingGuardStable z)
+        StStream≈.stream (flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz) | nothing , zp' , z' | true | [ eqpredi ] rewrite eqpredi rewrite innerPreservesPred z₀ x (zp' , z') predz₀ eqpredi =
+          eqskip (flatmapTrailingGuardStableInner z₀ x z' zp' z' predz₀ (innerPreservesPred z₀ x (zp' , z') predz₀ eqpredi))
 
+        flatmapTrailingGuardStableInnerStart : ∀ (z₀ : Z) (x : A) (z : Z) →
+          pred z₀ ≡ true →
+          pred z ≡ true →
+          StStream≈
+            (StStreamFunctions.flatmapInnerSt inner z outer (inner z₀ x))
+            (StStreamFunctions.flatmapInnerSt inner z outer (inner z₀ x) |> guard pred)
+        flatmapTrailingGuardStableInnerStart z₀ x z predz₀ predz with zi z₀ x
+        flatmapTrailingGuardStableInnerStart z₀ x z predz₀ predz | zp , zi' =
+          flatmapTrailingGuardStableInner z₀ x z zp zi' predz₀ predz
 
+        flatmapTrailingGuardStable : ∀ (z : Z) →
+          StStream≈
+            (unroll step z |> guard pred |> flatmapSt inner)
+            (unroll step z |> guard pred |> flatmapSt inner |> guard pred)
+        StStream≈.stream (flatmapTrailingGuardStable z) with step z
+        StStream≈.stream (flatmapTrailingGuardStable z) | just x , z' with pred z' | inspect pred z'
+        StStream≈.stream (flatmapTrailingGuardStable z) | just x , z' | false | [ eqpred ] rewrite eqpred = eqnil
+        StStream≈.stream (flatmapTrailingGuardStable z) | just x , z' | true | [ eqpred ] rewrite eqpred =
+          eqskip (flatmapTrailingGuardStableInnerStart z' x z' eqpred eqpred)
+        StStream≈.stream (flatmapTrailingGuardStable z) | nothing , z' with pred z' | inspect pred z'
+        StStream≈.stream (flatmapTrailingGuardStable z) | nothing , z' | false | [ eqpred ] rewrite eqpred = eqnil
+        StStream≈.stream (flatmapTrailingGuardStable z) | nothing , z' | true | [ eqpred ] rewrite eqpred =
+          eqskip (flatmapTrailingGuardStable z')
+
+    flatmapLinearWithTrailingGuard : (stepLin : State → Maybe B × State) →
+                                     ((s : State) → NoSkip stepRaw stepLin statePred s) →
+                                     ∀ (z : Z) →
+                                     StStream≈
+                                       (unroll step z |> guard pred |> flatmapSt inner |> guard pred)
+                                       (unroll stepLin (nothing , z) |> guard statePred |> abstractSt)
+    flatmapLinearWithTrailingGuard stepLin ns z =
+      trans≈ (flatmapLinearRaw z)
+             (abstract≈ (unrollLinear stepRaw stepLin statePred (nothing , z) (ns (nothing , z))))
+
+    flatmapLinear :
+      ((z₀ : Z) (x : A) (zpi : Zp × Z) →
+       pred z₀ ≡ true →
+       predi z₀ x zpi ≡ true →
+       pred (proj₂ zpi) ≡ true) →
+      (stepLin : State → Maybe B × State) →
+      ((s : State) → NoSkip stepRaw stepLin statePred s) →
+      ∀ (z : Z) →
+      StStream≈
+        (unroll step z |> guard pred |> flatmapSt inner)
+        (unroll stepLin (nothing , z) |> guard statePred |> abstractSt)
+    flatmapLinear innerPreservesPred stepLin ns z =
+      trans≈ (flatmapTrailingGuardStable innerPreservesPred z)
+             (flatmapLinearWithTrailingGuard stepLin ns z)
